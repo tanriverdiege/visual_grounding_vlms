@@ -47,6 +47,19 @@ class VLMConfig:
             structured form.
         output_scores: Collect post-processing distributions per step.
         output_logits: Collect raw logits per step.
+        min_pixels: Lower bound, in pixels, the image processor may downscale
+            an image to, for models with dynamic-resolution processors
+            (Qwen-VL family). None leaves the processor's own default in
+            place. No effect on processors that don't accept this argument.
+        max_pixels: Upper bound, in pixels, the image processor may upscale an
+            image to *or leave it at* -- for Qwen-VL-family processors this is
+            the main lever on how many image tokens one image becomes, and
+            therefore on activation/KV-cache memory. Left uncapped, a large
+            input image (e.g. a several-megapixel scan) can generate tens of
+            thousands of tokens and exhaust GPU memory on a single forward
+            pass. None leaves the processor's own default in place, which for
+            Qwen-VL processors is large enough to hit that failure mode on
+            typical 16 GB cards.
     """
 
     model_name: str
@@ -56,6 +69,8 @@ class VLMConfig:
     return_dict_in_generate: bool = False
     output_scores: bool = False
     output_logits: bool = False
+    min_pixels: int | None = None
+    max_pixels: int | None = None
 
     def __post_init__(self) -> None:
         """Validate the fields and apply the scores/logits implication.
@@ -63,7 +78,9 @@ class VLMConfig:
         Raises:
             TypeError: If a field holds a value of the wrong type.
             ValueError: If `model_name` is blank, `device` names an unknown
-                backend, or `max_new_tokens` is not positive.
+                backend, `max_new_tokens` is not positive, `min_pixels` or
+                `max_pixels` is not positive, or `min_pixels` exceeds
+                `max_pixels`.
         """
         if not isinstance(self.model_name, str) or not self.model_name.strip():
             raise ValueError(
@@ -95,6 +112,26 @@ class VLMConfig:
         if self.max_new_tokens < 1:
             raise ValueError(
                 f"max_new_tokens must be at least 1, got {self.max_new_tokens}"
+            )
+
+        for name in ("min_pixels", "max_pixels"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(
+                    f"{name} must be an int or null, got {type(value).__name__}"
+                )
+            if value < 1:
+                raise ValueError(f"{name} must be at least 1, got {value}")
+        if (
+            self.min_pixels is not None
+            and self.max_pixels is not None
+            and self.min_pixels > self.max_pixels
+        ):
+            raise ValueError(
+                f"min_pixels ({self.min_pixels}) must not exceed max_pixels "
+                f"({self.max_pixels})"
             )
 
         for name in _BOOL_FIELDS:
