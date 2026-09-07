@@ -92,7 +92,17 @@ class VLM:
         # missing or far slower than fp32. bf16 can also be used on CUDA,
         # but is not supported by all models.
         self.dtype = torch.float16 if self.device == "cuda" else torch.float32
-        self.processor = AutoProcessor.from_pretrained(config.model_name)
+        # Only forward min/max_pixels when set: most processors (LLaVA,
+        # SmolVLM, ...) don't accept them, so passing None-valued or absent
+        # kwargs unconditionally would either error or silently do nothing.
+        processor_kwargs: dict[str, int] = {}
+        if config.min_pixels is not None:
+            processor_kwargs["min_pixels"] = config.min_pixels
+        if config.max_pixels is not None:
+            processor_kwargs["max_pixels"] = config.max_pixels
+        self.processor = AutoProcessor.from_pretrained(
+            config.model_name, **processor_kwargs
+        )
         self.model = AutoModelForImageTextToText.from_pretrained(
             config.model_name, dtype=self.dtype
         ).to(self.device)  # type: ignore[arg-type]
@@ -336,33 +346,22 @@ class HuggingFaceVLM(VLM):
         )
         return chat
 
-
 if __name__ == "__main__":
     # The below is a simple unit test to verify that the VLM class works as expected.
-    vlm = HuggingFaceVLM(VLMConfig.from_yaml("configs/base_config.yaml"))
+    # vision_language_models/configs/qwen_3_vl_4b_instruct.yaml
+    vlm = HuggingFaceVLM(VLMConfig.from_yaml("configs/qwen_3_vl_4b_instruct.yaml"))
 
     prompts = [
-        ["What do you see in the image ?"],
+        ["Locate every instance of the following categories: 'eiffel tower's tip'. Output the bbox coordinates in JSON format. ?"],
         ["What do you see in the image ?"],
         ["What do you see in the image ?"],
     ]
     image_paths = [
-        ["../data/example_image1.png"],
+        ["../data/example_image5.png"],
         ["../data/example_image2.png"],
         ["../data/example_image3.png"],
     ]
 
     # Single inference
     single_out = vlm(images_paths=image_paths[0], prompts=prompts[0])
-
-    # Batched inference
-    batched_out = vlm.batch(images_paths=image_paths, prompts=prompts)
-
-    print("*****Single inference output******")
-    print(single_out.text)
-    print("*****Batched inference output (X-Ray)******")
-    print(batched_out[0].text)
-    print("*****Batched inference output (Cat)******")
-    print(batched_out[1].text)
-    print("*****Batched inference output (Dog)******")
-    print(batched_out[2].text)
+    print("Single inference output:", single_out.text)

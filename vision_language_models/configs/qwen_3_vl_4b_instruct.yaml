@@ -10,11 +10,30 @@
 
 # --- model ---
 # A HuggingFace model id.
-model_name: HuggingFaceTB/SmolVLM-256M-Instruct
+model_name: Qwen/Qwen3-VL-4B-Instruct
 
 # Device to place the model on: cpu, cuda, mps, or an indexed form such as
 # cuda:1. Leave null to auto-detect (cuda -> mps -> cpu).
 device: null
+
+# --- image resolution ---
+# Qwen-VL's processor uses dynamic resolution: an image becomes roughly
+# (pixels / 28^2) tokens, with no cap by default (this model's own
+# preprocessor_config.json allows up to ~16.7M pixels). A single large image
+# -- a several-megapixel scan, for instance -- can turn into 10k+ tokens and
+# OOM a 16 GB card on its own, well before model size is the bottleneck.
+#
+# These are Qwen's stock general-purpose (VQA/captioning) bounds, applied here
+# only to stay within GPU memory on this cluster -- NOT tuned for this
+# project's grounding accuracy needs. They trade detail for headroom: at
+# max_pixels below, a ~3600x3600 image is downsampled to a 62x62 token grid
+# (~980 tokens) instead of running near-native at ~13k tokens. Small or
+# closely-packed objects can become unrecoverable at this budget. Revisit by
+# raising max_pixels and confirming the run still fits in memory (watch
+# torch.cuda.max_memory_allocated()) once accuracy at this setting is
+# measured.
+min_pixels: 200704  # 256 * 28 * 28
+max_pixels: 1003520  # 1280 * 28 * 28
 
 # --- generation ---
 # true samples from the distribution; false takes the argmax at every step,
