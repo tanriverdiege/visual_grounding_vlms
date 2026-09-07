@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# GPU box (Linux + CUDA) environment for scoliosis VLM inference.
+# GPU box (Linux + CUDA) environment for VLM inference.
+#
+# Current cluster profile: Ubuntu 20.04, 8x Quadro RTX 5000 (sm_75, 16 GB
+# each). Treat this as a pre-Ampere cluster: flash-attn is usually not worth
+# forcing, and the safest first pass is the transformers lane without vLLM.
 #
 #   bash setup_gpu.sh          # transformers lane only
 #   bash setup_gpu.sh --vllm   # also install the vLLM serving engine
@@ -10,7 +14,7 @@
 # torch, then layer everything else on top.
 set -euo pipefail
 
-ENV_NAME="${ENV_NAME:-scoliosis-vlm}"
+ENV_NAME="${ENV_NAME:-visual-grounding-vlms}"
 WITH_VLLM=0
 [[ "${1:-}" == "--vllm" ]] && WITH_VLLM=1
 
@@ -27,8 +31,12 @@ if [[ $WITH_VLLM -eq 1 ]]; then
   echo "==> installing vLLM (brings its own pinned torch + CUDA runtime)"
   run python -m pip install "vllm==0.28.0"
 else
-  echo "==> installing torch (CUDA build)"
-  run python -m pip install torch torchvision
+  # Pin to a CUDA 12.4 wheel set so pip does not pull a newer cu13x build
+  # that is incompatible with this driver's 12.4 runtime.
+  echo "==> installing torch (CUDA 12.4 build)"
+  run python -m pip install \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    torch==2.5.1 torchvision==0.20.1
 fi
 
 echo "==> installing transformers lane + project deps"
@@ -42,10 +50,21 @@ run python -m pip install \
 
 # flash-attn LAST: it compiles against whatever torch is already present, so
 # installing it earlier would build against a torch that vLLM then replaces.
-# Skip it entirely if the GPU is older than Ampere (sm_80).
-echo "==> optional: flash-attn (skip on pre-Ampere GPUs)"
-run python -m pip install flash-attn --no-build-isolation || \
-  echo "    flash-attn failed; continuing without it (models fall back to sdpa)"
+# Skip it entirely on pre-Ampere GPUs such as the RTX 5000s in this cluster.
+if run python - <<'PY'
+import torch, sys
+if not torch.cuda.is_available():
+    sys.exit(0)
+major, minor = torch.cuda.get_device_capability(0)
+sys.exit(0 if major < 8 else 1)
+PY
+then
+  echo "==> skipping flash-attn on pre-Ampere GPUs (models will use sdpa)"
+else
+  echo "==> optional: flash-attn (Ampere+ only)"
+  run python -m pip install flash-attn --no-build-isolation || \
+    echo "    flash-attn failed; continuing without it (models fall back to sdpa)"
+fi
 
 echo
 echo "==> verifying"

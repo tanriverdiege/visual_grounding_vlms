@@ -37,13 +37,46 @@ Switching lanes is a one-liner in either env — no rebuild, because 3.11 has
 wheels for both:
 
 ```bash
-conda activate scoliosis-vlm
+conda activate visual-grounding-vlms
 pip install "transformers==5.16.1"     # newest models / newest API
 pip install "transformers==4.57.6"     # back to the compatible lane
 ```
 
 Keep a lane per env rather than fighting one env into serving both. If you need
-4.x and 5.x simultaneously, clone: `conda create -n scoliosis-vlm-t5 --clone scoliosis-vlm`.
+4.x and 5.x simultaneously, clone: `conda create -n visual-grounding-vlms-t5 --clone visual-grounding-vlms`.
+
+## GPU cluster guide
+
+This repo already has the right split for the current cluster:
+
+- [environment.yml](environment.yml) is for the macOS 13 development machine.
+- [setup_gpu.sh](setup_gpu.sh) is for the Linux CUDA cluster.
+
+Current cluster profile: Ubuntu 20.04, NVIDIA driver 550.144.03, CUDA 12.4,
+8x Quadro RTX 5000 cards with 16 GB each (sm_75 / Turing).
+
+What that means in practice:
+
+1. Use Python 3.11.
+2. Start with `bash setup_gpu.sh` rather than `--vllm`.
+3. Expect `flash-attn` to skip or fail; SDPA fallback is the normal path here.
+4. Treat 7B models as the safest first test on a single 16 GB card.
+5. Treat 8B and 13B models as stretch targets unless you add quantization,
+   offload, or sharding later.
+6. Do not expect the current VLM wrapper to use multiple GPUs automatically;
+   it loads a model onto one device with `.to(self.device)`.
+
+For model work on this cluster, the recommended first pass is:
+
+```bash
+cd /home/ege/visual_grounding_vlms
+bash setup_gpu.sh
+conda activate visual-grounding-vlms
+python -c "from vision_language_models.vlm_config import VLMConfig; print(VLMConfig.from_yaml('vision_language_models/configs/llava_1.5_7b.yaml'))"
+```
+
+Only try `bash setup_gpu.sh --vllm` after the transformers lane is verified and
+you actually need vLLM serving on the cluster.
 
 ## Platform limits on this Mac
 
