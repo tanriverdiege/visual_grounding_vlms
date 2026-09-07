@@ -3,7 +3,7 @@
 # Model inference runs on the GPU box -- see setup_gpu.sh.
 #
 #   conda env create -f environment.yml
-#   conda activate scoliosis-vlm
+#   conda activate visual_grounding_vlms
 #
 # Two deliberate constraints, both explained in VERSIONS.md:
 #   - python 3.11  : widest wheel coverage across transformers 4.3x -> 5.x
@@ -12,7 +12,7 @@
 # Everything is installed via pip on purpose. Do NOT `conda install` compiled
 # libs (av, ffmpeg, openblas) into this env -- conda-forge drags in llvm-openmp
 # next to torch's bundled libomp, and two OpenMP runtimes abort the process.
-name: scoliosis-vlm
+name: visual_grounding_vlms
 channels:
   - defaults
 dependencies:
