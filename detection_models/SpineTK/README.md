@@ -4,6 +4,36 @@
 
 This is a repository that contains the code to train a network for doing MR, CT, and X-ray image annotation (landmark annotation of six keypoints on individual vertebral bodies for vertebral height measurement). It is recommended that you run this on Google Colab. 
 
+### Environment setup (local / conda)
+
+This repo pins old versions of PyTorch/CUDA/Detectron2 (torch 1.8.0+cu101, detectron2 built for torch1.8/cu101) because Detectron2 never released official wheels for newer PyTorch at the time this was written. These wheels are still hosted and installable, but only for **Python 3.6–3.9** (no wheel exists for cp310+), and a couple of dependency pins are needed to keep newer resolvers from pulling in incompatible package versions.
+
+Verified working with: Python 3.9, NVIDIA driver 550.x (CUDA 12.4 runtime), Turing-class GPUs (e.g. Quadro RTX 5000, compute capability 7.5). A CUDA 10.1-compiled wheel needs a GPU with a compute capability that existed by CUDA 10.1 (Turing/Volta/Pascal etc.) — very new GPU generations (e.g. Ada/Hopper/Blackwell) will not have kernels for their architecture in this build.
+
+To (re)create the environment:
+
+```bash
+conda create -n spinetk python=3.9 -y
+conda activate spinetk
+cd detection_models/SpineTK
+./install.sh
+```
+
+`install.sh` installs, in order:
+1. `pyyaml==5.1` (required by an older detectron2/yacs version)
+2. `torch==1.8.0+cu101` / `torchvision==0.9.0+cu101` from `download.pytorch.org`
+3. `detectron2` from the prebuilt `cu101`/`torch1.8` wheel index
+4. `numpy<2` — torch 1.8's compiled extensions predate NumPy 2.0's ABI break (`AttributeError: _ARRAY_API not found` otherwise)
+5. `pillow<10` — detectron2 0.6 uses legacy `PIL.Image.LINEAR`/`BILINEAR` constants that Pillow 10 removed
+6. `opencv-python-headless<4.10`, `pandas`, `scikit-learn` — the newest `opencv-python-headless` releases require `numpy>=2`, which would silently re-break torch, so it's pinned below that
+
+Verify the install:
+
+```bash
+python -c "import torch, detectron2; print(torch.__version__, torch.cuda.is_available(), detectron2.__version__)"
+# expected: 1.8.0+cu101 True 0.6+cu101
+```
+
 ### Set up images/annotations
 
 Images must be contained in a single folder with the following structure:
