@@ -2,7 +2,28 @@
 
 ![](https://i.imgur.com/3nQo0jB.png)
 
+> **This is a modified copy of [abhisuri97/SpineTK](https://github.com/abhisuri97/SpineTK) by Abhinav Suri, cloned into this project.** All original code and rights belong to the original author; this copy is not affiliated with, endorsed by, or reviewed by them. The modifications described below were made for our own project's purposes and convenience.
+
 This is a repository that contains the code to train a network for doing MR, CT, and X-ray image annotation (landmark annotation of six keypoints on individual vertebral bodies for vertebral height measurement). It is recommended that you run this on Google Colab. 
+
+## Datasets used
+
+The model in `configs/csxa.yaml` is trained on **csxa**, an open-source, publicly available cervical spine X-ray dataset with per-vertebra corner-point annotations (C2-C7) and clinical measurements (disc heights, Cobb angles, cervical slopes, etc.):
+
+- **Dataset**: [csxa on Science Data Bank](https://www.scidb.cn/en/detail?dataSetId=8e3b3d5e60a348ba961e19d48b881c90)
+
+We are not the creators of this dataset - all credit and rights for the underlying images and annotations belong to its original authors. `z_temp_organize_csxa_data.py` (in the repo root, outside this folder) converts its native LabelMe-style export into this project's expected baseline-directory format; see that script for exactly how the raw dataset maps onto `configs/csxa.yaml`'s `kpnames`.
+
+## What's different in this copy
+
+The original repo is a research script collection, largely written for interactive/Colab use rather than being run end-to-end as-is (several of its functions had `import module` vs. `from module import function` mistakes, missing arguments, and a hardcoded 6-keypoint assumption that doesn't match every dataset). This copy keeps the original architecture and data format, but reworks the pipeline into something runnable from the command line on a real dataset:
+
+- **Config-driven pipeline** (`spinetk_config.py`): every training/inference setting - dataset path, keypoint names, learning rate, iterations, score threshold, etc. - lives in one validated `SpineTKConfig`, loaded from a YAML file (see `configs/csxa.yaml`). `num_keypoints` is *derived* from `kpnames` everywhere rather than being a separate hardcoded number, which was a repeated source of bugs in the original code (a keypoint-count mismatch scattered across `get_dicts.py`, `train.py`, and `inference.py`).
+- **`run.py <config.yaml>`** trains end-to-end from a single config file (`python run.py configs/csxa.yaml`), replacing the original's cell-by-cell Colab workflow.
+- **`compute_keypoint_error.py <config.yaml>`** runs inference over a full split, IoU-matches predictions to ground-truth vertebrae (`keypoint_matching.py`), and reports per-keypoint pixel error plus missed-detection/false-positive counts, with a full per-vertebra CSV breakdown.
+- **`plot_predictions.py <config.yaml>`** plots ground truth (hollow circles) against predicted keypoints (filled circles, matching colors) on a random - optionally seeded, for reproducibility - sample of images from any split.
+- **`configs/detectron.yaml`** is a sanity-check config that loads the *original*, never-fine-tuned COCO-pretrained checkpoint instead of a trained one, to verify that fine-tuning is actually responsible for a model's predictions rather than the pretrained backbone alone.
+- See `commands.sh` for the exact commands used for this project's own training/eval runs, and the "Environment setup" section below for reproducing the pinned dependency stack this still requires.
 
 ### Environment setup (local / conda)
 
@@ -35,6 +56,8 @@ python -c "import torch, detectron2; print(torch.__version__, torch.cuda.is_avai
 ```
 
 ### Set up images/annotations
+
+*This section is the original project's documentation of the on-disk data format, which this copy's code still uses unchanged. The DICOM-preprocessing and `imgaug`-based augmentation-generation example code below is the original author's own approach; for our own datasets we instead wrote one-off conversion scripts per source dataset (outside this folder, in the repo root - e.g. converting a Roboflow COCO export and a LabelMe-annotated dataset into this exact folder structure) and have not yet generated `augs/` folders, so our own baseline directories currently only have the `src/0/` half of this structure.*
 
 Images must be contained in a single folder with the following structure:
 
@@ -250,54 +273,35 @@ You'll also need to generate a `metadata.json` file. The metadata file should co
 }
 ```
 
-### Running [DOCUMENTATION Work in Progress!]
+### Running
 
-In a colab notebook, upload the code to the top level directory (files should be on the same level as the directory). You should also upload your images to colab. Then run these blocks of code (or run `run.py` after running `./install.sh`: 
+This copy replaces the original's Colab-notebook, cell-by-cell workflow with plain command-line scripts, each driven by a `SpineTKConfig` YAML file. `configs/csxa.yaml` is a fully worked example already pointing at a real converted dataset.
 
-```
-./install.sh
-```
+Train:
 
-```py
-from detectron2.utils.logger import setup_logger
-from detectron2.data import MetadataCatalog, DatasetCatalog
-
-import sys
-from split import make_split
-from visualize import visualize_sample
-import train 
-from inference import inference, eval_img
-import setup_catalogs
-
-setup_logger()
+```bash
+conda activate spinetk
+python run.py configs/csxa.yaml
 ```
 
-```py
-baseline_directory = # path to directory with your images
-X_train, X_val, X_test, y_train, y_val, y_test = make_split(baseline_directory)
-version = 'v1' # change each time you run
-vert_metadata = setup_catalogs(version, 
-               X_train, X_val, X_test,
-               kpnames=['bottom_left', 'bottom_middle', 'bottom_right',
-                        'top_right', 'top_middle', 'top_left'])
+This splits the baseline dataset, registers it with Detectron2, trains for `iters` iterations (resuming from an existing checkpoint in `output_dir` if `resume: true`), and writes `model_final.pth` to `output_dir`.
 
-visualize_sample(DatasetCatalog.get(f'vert{version}_train'), vert_metadata)
+Evaluate per-keypoint pixel error against ground truth, over a full split:
+
+```bash
+python compute_keypoint_error.py configs/csxa.yaml --split test --csv keypoint_errors.csv
 ```
 
-`train` takes in a version name, the number of iterations to train (to crudely implement early stopping, increase this 100 iters at a time and see if val_loss decreases by 10%. Note that the "True" argument means that the training will continue where you stopped. So you can run with train(version, 100, True) to train for 100 total epochs and then call train(version, 200, True) to train for 200 total epochs (trains the "100" model for 100 more epochs). 
+Plot a random sample of predictions against ground truth, for visual inspection:
 
-```py
-train(version, 1300, True)
+```bash
+python plot_predictions.py configs/csxa.yaml --split test --limit 5 --seed 42 --output-dir prediction_plots
 ```
 
-Instantiate the predictor with a threshold confidence level. 0.6 is usually good to filter out the "bad" results with vertebrae that are too small.
+Sanity-check that training actually mattered, by running the same evaluation against the original, never-fine-tuned checkpoint instead:
 
-```py
-predictor = inference("output/model_final.pth", 0.6)
+```bash
+python plot_predictions.py configs/detectron.yaml --split test --limit 5 --seed 42 --output-dir plots_untrained
 ```
 
-See the results! 2nd argument = path to the image, 3rd argument is the output path.
-
-```py
-eval_img(vert_metadata, "YOUR IMAGE PATH HERE.png", "out.png")
-```
+See `commands.sh` for the exact commands used for this project's own runs, and each script's own `--help` / module docstring for the full option list.
