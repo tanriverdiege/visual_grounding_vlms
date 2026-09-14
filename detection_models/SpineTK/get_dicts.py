@@ -1,6 +1,8 @@
-from detectron2.structures import BoxMode
 import json
 import os
+
+from detectron2.structures import BoxMode
+
 
 def get_dicts(baseline_directory, img_list, tr_type="train", num_keypoints=6):
   # Description: Will take in a base directory containing all images w/augmentations

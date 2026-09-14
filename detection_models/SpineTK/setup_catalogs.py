@@ -2,22 +2,21 @@ from detectron2.data import MetadataCatalog, DatasetCatalog
 from return_dicts import return_dicts
 import pandas as pd
 
+from spinetk_config import SpineTKConfig
+
 def setup_catalogs(
-      version: str,
+      config: SpineTKConfig,
       train: pd.DataFrame,
       val: pd.DataFrame,
       test: pd.DataFrame,
-      kpnames: list[str],
-      baseline_directory: str
     ):
-  
-  num_keypoints = len(kpnames)
+
   for d in ["train", "val", "test"]:
-      DatasetCatalog.register(f"vert{version}_" + d,
-        lambda d=d: return_dicts(d, train, val, test, baseline_directory, num_keypoints)
+      DatasetCatalog.register(f"vert{config.version}_" + d,
+        lambda d=d: return_dicts(d, train, val, test, config.baseline_directory, config.num_keypoints)
       )
-      MetadataCatalog.get(f"vert{version}_" + d).set(thing_classes=["vertebrae"],
-                                          keypoint_names=kpnames,
+      MetadataCatalog.get(f"vert{config.version}_" + d).set(thing_classes=["vertebrae"],
+                                          keypoint_names=config.kpnames,
                                           keypoint_flip_map=[])
-  vert_train_metadata = MetadataCatalog.get(f"vert{version}_train")
+  vert_train_metadata = MetadataCatalog.get(f"vert{config.version}_train")
   return vert_train_metadata

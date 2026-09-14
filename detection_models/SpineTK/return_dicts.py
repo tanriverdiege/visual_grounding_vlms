@@ -1,5 +1,6 @@
 from get_dicts import get_dicts
 
+
 def return_dicts(tr_type, train, val, test, baseline_directory, num_keypoints=6):
   if tr_type == 'train':
     return get_dicts(baseline_directory, train.index.to_list(), "train", num_keypoints)
