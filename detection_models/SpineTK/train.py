@@ -16,7 +16,7 @@ def train(version, iters, resume=True):
   cfg.SOLVER.STEPS = []        # do not decay learning rate
   cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 512   
   cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1  # only has one class (vertebrae)
-  cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 6
+  cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 4
 
   os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
   trainer = DefaultTrainer(cfg) 

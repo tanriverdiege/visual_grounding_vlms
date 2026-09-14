@@ -2,10 +2,11 @@ from detectron2.structures import BoxMode
 import json
 import os
 
-def get_dicts(baseline_directory, img_list, tr_type="train"):
+def get_dicts(baseline_directory, img_list, tr_type="train", num_keypoints=6):
   # Description: Will take in a base directory containing all images w/augmentations
   # and return a list of dataset directionaries compatible with Detectron2 that are
   # in the img_list
+  expected_keypoint_len = num_keypoints * 3  # (x, y, visibility) per keypoint
   dataset_dicts = []
   for x in os.listdir(f"{baseline_directory}"):
     print(x)
@@ -19,14 +20,14 @@ def get_dicts(baseline_directory, img_list, tr_type="train"):
           # double checking...
           throwout = False
           for a in d['annotations']:
-            if len(a['keypoints']) != 18:
+            if len(a['keypoints']) != expected_keypoint_len:
               throwout = True
           if throwout == False:
             dataset_dicts.append(d)
       else:
         print(f"ERROR on {x}")
         continue
-      if (tr_type == "train" or tr_type == "val"):
+      if (tr_type == "train" or tr_type == "val") and os.path.isdir(f"{baseline_directory}/{x}/augs"):
         for a in os.listdir(f"{baseline_directory}/{x}/augs"):
           if (os.path.isdir(f"{baseline_directory}/{x}/augs/{a}")):
             with open(f'{baseline_directory}/{x}/augs/{a}/aug-{a}.json') as json_file:
@@ -34,7 +35,7 @@ def get_dicts(baseline_directory, img_list, tr_type="train"):
               d['bbox_mode'] = BoxMode.XYXY_ABS
               throwout = False
               for a in d['annotations']:
-                if len(a['keypoints']) != 18:
+                if len(a['keypoints']) != expected_keypoint_len:
                   throwout = True
               if throwout == False:
                 dataset_dicts.append(d)
