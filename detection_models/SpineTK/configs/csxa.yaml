@@ -1,0 +1,60 @@
+# Every setting SpineTK's train/inference/catalog-setup steps take. Load with:
+#
+#   from spinetk_config import SpineTKConfig
+#   config = SpineTKConfig.from_yaml("configs/csxa.yaml")
+#
+# Unknown keys are an error, not a warning -- a typo'd key here would
+# otherwise be a setting that silently did not apply.
+#
+# Run with: python run.py configs/csxa.yaml
+
+# --- data ---
+# Directory of per-image folders with src/aug annotations, built by
+# z_temp_organize_csxa_data.py from the LabelMe export at /data/datasets/csxa.
+baseline_directory: /data/datasets/csxa/spinetk_baseline
+
+# Ordered keypoint names. num_keypoints is always len(kpnames) -- it is not a
+# separate setting anywhere, so it can never drift out of sync the way it did
+# across get_dicts.py/train.py/inference.py before this config existed.
+#
+# This dataset only has the 4 directly-labeled corners per vertebra (no
+# interpolated top_middle/bottom_middle) -- see z_temp_organize_csxa_data.py.
+kpnames:
+  - bottom_left
+  - bottom_right
+  - top_right
+  - top_left
+
+# Dataset/catalog version tag Detectron2's DatasetCatalog registers names
+# under, e.g. "v1" -> "vertv1_train". Bump this if you want a second
+# registration (different split/kpnames) to coexist in the same process
+# instead of colliding with an existing one.
+version: v1
+
+# --- model architecture ---
+model_zoo_config: COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml
+num_classes: 1  # single class: "vertebrae"
+
+# --- training ---
+iters: 1300
+resume: true
+ims_per_batch: 2
+base_lr: 0.00025
+batch_size_per_image: 512
+num_workers: 2
+output_dir: ./output
+
+# --- inference ---
+model_weights: output/model_final.pth
+score_thresh: 0.8
+# Per-keypoint OKS sigmas for keypoint-AP evaluation, one per kpnames entry.
+# Left null -> uniform 1.0 per keypoint, an unmeasured placeholder (not
+# calibrated against real annotation variance). Only the length is
+# guaranteed to match kpnames; the actual values should be recalibrated
+# before trusting keypoint-AP numbers from this config.
+oks_sigmas: null
+
+# --- misc run behavior ---
+visualize: false
+eval_image: null
+eval_output: out.png

@@ -1,0 +1,43 @@
+# Sanity-check config: uses the ORIGINAL, unmodified COCO-pretrained
+# Keypoint R-CNN checkpoint instead of our fine-tuned output/model_final.pth,
+# to answer "did training on vertebrae actually change anything?"
+#
+# That checkpoint was trained for 80 COCO classes / 17 human keypoints, but
+# our architecture (below) uses 1 class / 4 keypoints - the shapes don't
+# match, so Detectron2 loads the pretrained backbone/FPN/RPN but *randomly
+# reinitializes* the classification head and keypoint head (you'll see a
+# "Skip loading parameter ... shape ... in checkpoint" warning per mismatched
+# layer when this runs - that's expected, not an error). This is effectively
+# "iteration 0" of training: the exact starting point train.py fine-tunes
+# from, before any of our 1300 iterations happened.
+#
+# Compare its output against configs/csxa.yaml's on the same images:
+#   python plot_predictions.py configs/detectron.yaml --split test --limit 5 --seed 42 --output-dir plots_untrained
+#   python plot_predictions.py configs/csxa.yaml       --split test --limit 5 --seed 42 --output-dir plots_trained
+# (same --seed -> same 5 images from both, so the comparison is apples-to-apples)
+
+baseline_directory: /data/datasets/csxa/spinetk_baseline
+kpnames:
+  - bottom_left
+  - bottom_right
+  - top_right
+  - top_left
+version: untrained
+
+model_zoo_config: COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml
+num_classes: 1
+
+# The ORIGINAL pretrained checkpoint - never fine-tuned on vertebrae at all.
+# (Same URL model_zoo.get_checkpoint_url() and train.py's cfg.MODEL.WEIGHTS
+# resolve to before fine-tuning starts.)
+model_weights: https://dl.fbaipublicfiles.com/detectron2/COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x/137849621/model_final_a6e10b.pkl
+
+# Lower than csxa.yaml's 0.8 on purpose: a randomly-initialized classification
+# head produces essentially arbitrary confidence scores, so a high threshold
+# could filter out literally everything and leave nothing to look at.
+score_thresh: 0.3
+oks_sigmas: null
+
+visualize: false
+eval_image: null
+eval_output: out.png
