@@ -1,0 +1,54 @@
+# Every argument the VLM constructor takes. Load with:
+#
+#   from config import VLMConfig
+#   from vlm import HuggingFaceVLM
+#
+#   vlm = HuggingFaceVLM(VLMConfig.from_yaml("config.yaml"))
+#
+# Unknown keys are an error, not a warning -- a typo'd key here would
+# otherwise be a setting that silently did not apply.
+
+# --- model ---
+# A HuggingFace model id.
+model_name: "google/medgemma-1.5-4b-it"
+
+# Device to place the model on: cpu, cuda, mps, or an indexed form such as
+# cuda:1. Leave null to auto-detect (cuda -> mps -> cpu).
+device: null
+
+# MedGemma is built on Gemma3, whose activations overflow float16's range --
+# the default fp16-on-CUDA load produces NaN logits, which decode as a fixed
+# token (<pad>) at every step regardless of prompt. bfloat16 has more range
+# and headroom, so it must be set explicitly here.
+dtype: "bfloat16"
+
+# --- generation ---
+# true samples from the distribution; false takes the argmax at every step,
+# which is deterministic and what evaluation runs should use.
+do_sample: false
+
+# Cap on generated tokens. MedGemma's localization prompt asks it to reason
+# step-by-step before its final JSON answer (its own notebook's protocol --
+# see run_grounding.py's _MEDGEMMA_PROMPT_TEMPLATE), and that reasoning alone
+# commonly runs 200-300+ tokens; 128 truncates before the JSON ever appears.
+max_new_tokens: 1000
+
+# --- diagnostics ---
+# Return a structured output from generate() instead of a bare tensor. Forced
+# on automatically when either of the two below is true, since scores and
+# logits are only reachable through the structured form.
+return_dict_in_generate: false
+
+# Per-step distributions *after* logits processors -- what sampling saw.
+# Needed for VLMOutput.token_confidences() and .mean_confidence().
+output_scores: false
+
+# Per-step *raw* model outputs, before any processing.
+output_logits: false
+
+# --- prompting ---
+# Key into prompts.PROMPTS -- see prompts.py for the template text.
+# run_grounding.py currently ignores this for MedGemma and always uses the
+# "medgemma" style directly (see _is_medgemma), but it's recorded here too so
+# the config stays a complete record of how a run was produced.
+prompt_template: medgemma

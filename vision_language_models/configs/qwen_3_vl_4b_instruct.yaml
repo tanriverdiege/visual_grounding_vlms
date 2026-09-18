@@ -23,31 +23,38 @@ device: null
 # -- a several-megapixel scan, for instance -- can turn into 10k+ tokens and
 # OOM a 16 GB card on its own, well before model size is the bottleneck.
 #
-# These are Qwen's stock general-purpose (VQA/captioning) bounds, applied here
-# only to stay within GPU memory on this cluster -- NOT tuned for this
-# project's grounding accuracy needs. They trade detail for headroom: at
-# max_pixels below, a ~3600x3600 image is downsampled to a 62x62 token grid
-# (~980 tokens) instead of running near-native at ~13k tokens. Small or
-# closely-packed objects can become unrecoverable at this budget. Revisit by
-# raising max_pixels and confirming the run still fits in memory (watch
-# torch.cuda.max_memory_allocated()) once accuracy at this setting is
-# measured.
+# max_pixels below was picked by empirically sweeping this exact model on this
+# cluster's 16 GB Quadro RTX 5000, generating max_new_tokens=128 against a
+# 13.2 MP worst-case test image (data/example_image5.png) at each step:
+#
+#   max_pixels   tokens   reserved VRAM
+#   1,003,520      976     ~9-10 GB
+#   2,744,000    2,616    13.59 GB   <- chosen: real headroom
+#   3,136,000    3,040    15.00 GB      still fits, but only ~1.4 GB free
+#   3,920,000+       -    OOM            hard wall, not a gradual slowdown
+#
+# 2,744,000 keeps ~2.5 GB of headroom for other image aspect ratios / overhead
+# while giving ~2.7x the token budget (and therefore detail) of Qwen's stock
+# VQA default. Still not validated for THIS project's grounding accuracy --
+# small/closely-packed objects can still be lost at this budget. Re-run the
+# sweep (see vlm.py conversation history / ask Claude to repeat it) if you
+# change the model, the GPU, or need more resolution than this.
 min_pixels: 200704  # 256 * 28 * 28
-max_pixels: 1003520  # 1280 * 28 * 28
+max_pixels: 2744000  # 3500 * 28 * 28
 
 # --- generation ---
 # true samples from the distribution; false takes the argmax at every step,
-# which is deterministic and what evaluation runs should use.
+# false = greedy sampling, which is deterministic and what evaluation runs should use.
 do_sample: false
 
 # Cap on generated tokens.
-max_new_tokens: 128
+max_new_tokens: 4096
 
 # --- diagnostics ---
 # Return a structured output from generate() instead of a bare tensor. Forced
 # on automatically when either of the two below is true, since scores and
 # logits are only reachable through the structured form.
-return_dict_in_generate: false
+return_dict_in_generate: true
 
 # Per-step distributions *after* logits processors -- what sampling saw.
 # Needed for VLMOutput.token_confidences() and .mean_confidence().
@@ -55,3 +62,8 @@ output_scores: false
 
 # Per-step *raw* model outputs, before any processing.
 output_logits: false
+
+# --- prompting ---
+# Key into prompts.PROMPTS -- see prompts.py for the template text. Used as
+# run_grounding.py's default when its own prompt_template argument is null.
+prompt_template: qwen_spine_vert_detection
