@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PIL import Image
 import torch
+from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoProcessor
-
 from vlm_config import VLMConfig
 
 
@@ -32,6 +31,11 @@ class VLMOutput:
         pad_token_id: Used to drop padding from confidence statistics. In a
             batch, every sample that finishes before the longest one is padded,
             and those positions carry meaningless scores (1.0 or 0.0).
+        image_sizes: (width, height) of each ORIGINAL input image, in the
+            order passed in. Grounding replies (Qwen-VL family) give box
+            coordinates normalized to the whole original image, so this is
+            what a caller needs to convert them to pixels -- carried here so
+            it doesn't have to reload the image just to ask its size again.
     """
 
     text: str
@@ -40,6 +44,7 @@ class VLMOutput:
     logits: tuple[torch.Tensor, ...] | None = None
     transition_scores: torch.Tensor | None = None
     pad_token_id: int | None = None
+    image_sizes: list[tuple[int, int]] | None = None
 
     def token_confidences(self, skip_padding: bool = True) -> list[tuple[int, float]]:
         """Per-token probability of the chosen token.
@@ -88,10 +93,7 @@ class VLM:
         """
         self.config = config
         self.device = self._pick_device(config.device)
-        # fp16 only pays off on CUDA; on CPU most half-precision kernels are
-        # missing or far slower than fp32. bf16 can also be used on CUDA,
-        # but is not supported by all models.
-        self.dtype = torch.float16 if self.device == "cuda" else torch.float32
+        self.dtype = self._pick_dtype(config.dtype, self.device)
         # Only forward min/max_pixels when set: most processors (LLaVA,
         # SmolVLM, ...) don't accept them, so passing None-valued or absent
         # kwargs unconditionally would either error or silently do nothing.
@@ -125,6 +127,53 @@ class VLM:
         if torch.backends.mps.is_available():
             return "mps"
         return "cpu"
+
+    def _pick_dtype(self, requested: str | None, device: str) -> torch.dtype:
+        """Resolve the torch dtype to load the model in.
+
+        Args:
+            requested: An explicit dtype name from config, or None for the
+                historical default.
+            device: The resolved device string, from `_pick_device`.
+
+        Returns:
+            The torch dtype to load with.
+        """
+        if requested is not None:
+            return {
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+                "float32": torch.float32,
+            }[requested]
+        # fp16 only pays off on CUDA; on CPU most half-precision kernels are
+        # missing or far slower than fp32. This default is a trap for Gemma3
+        # and models built on it (e.g. MedGemma): their activations overflow
+        # fp16's range and silently produce NaN logits, which argmax turns
+        # into a fixed token (often <pad>) every step -- generation looks
+        # like it produces nothing, with no error. Those need dtype:
+        # bfloat16 set explicitly in the model's config file.
+        return torch.float16 if device == "cuda" else torch.float32
+
+    def _drop_leading_bos(self, chat: str) -> str:
+        """Strip a leading BOS token `apply_chat_template` already added.
+
+        Chat templates (Gemma, Llama, ...) commonly render their own leading
+        BOS into the text. Passing that string to the processor/tokenizer
+        then adds a second BOS by default (`add_special_tokens=True`), so the
+        model sees `<bos><bos>...`. This is silently tolerated by some models
+        but degrades or breaks others, so strip the duplicate here rather
+        than per-model.
+
+        Args:
+            chat: The rendered chat string.
+
+        Returns:
+            `chat` with one leading BOS token removed, if it had one.
+        """
+        bos = self.processor.tokenizer.bos_token
+        if bos and chat.startswith(bos):
+            return chat[len(bos) :]
+        return chat
 
     def load_image(self, path: str) -> Image.Image:
         """Open an image and convert it to RGB.
@@ -165,7 +214,8 @@ class VLM:
             The reply plus any requested diagnostics.
         """
         images = [self.load_image(path) for path in images_paths]
-        chat = self.format_prompt(prompts=prompts, images=images)
+        image_sizes = [image.size for image in images]
+        chat = self._drop_leading_bos(self.format_prompt(prompts=prompts, images=images))
         inputs = self.processor(text=chat, images=images, return_tensors="pt").to(
             self.device
         )
@@ -220,6 +270,7 @@ class VLM:
             logits=logits,
             transition_scores=transition_scores,
             pad_token_id=self.processor.tokenizer.pad_token_id,
+            image_sizes=image_sizes,
         )
 
     def batch(
@@ -252,8 +303,9 @@ class VLM:
         # Nested list is required: a flat list[Image] is read as ONE prompt
         # holding several images, not as a batch.
         batch_images = [[self.load_image(p) for p in paths] for paths in images_paths]
+        batch_image_sizes = [[image.size for image in images] for images in batch_images]
         chats = [
-            self.format_prompt(prompts=texts, images=imgs)
+            self._drop_leading_bos(self.format_prompt(prompts=texts, images=imgs))
             for texts, imgs in zip(prompts, batch_images, strict=True)
         ]
 
@@ -314,6 +366,7 @@ class VLM:
                     None if transition_scores is None else transition_scores[i : i + 1]
                 ),
                 pad_token_id=self.processor.tokenizer.pad_token_id,
+                image_sizes=batch_image_sizes[i],
             )
             for i, text in enumerate(decoded)
         ]
@@ -345,23 +398,3 @@ class HuggingFaceVLM(VLM):
             messages, add_generation_prompt=True
         )
         return chat
-
-if __name__ == "__main__":
-    # The below is a simple unit test to verify that the VLM class works as expected.
-    # vision_language_models/configs/qwen_3_vl_4b_instruct.yaml
-    vlm = HuggingFaceVLM(VLMConfig.from_yaml("configs/qwen_3_vl_4b_instruct.yaml"))
-
-    prompts = [
-        ["Locate every instance of the following categories: 'eiffel tower's tip'. Output the bbox coordinates in JSON format. ?"],
-        ["What do you see in the image ?"],
-        ["What do you see in the image ?"],
-    ]
-    image_paths = [
-        ["../data/example_image5.png"],
-        ["../data/example_image2.png"],
-        ["../data/example_image3.png"],
-    ]
-
-    # Single inference
-    single_out = vlm(images_paths=image_paths[0], prompts=prompts[0])
-    print("Single inference output:", single_out.text)

@@ -14,9 +14,15 @@ from typing import Any
 
 import yaml
 
+from prompts import PROMPTS
+
 # Backends `device` may name. A trailing index ("cuda:1") is allowed, so only
 # the part before the colon is matched.
 _DEVICE_BACKENDS = ("cpu", "cuda", "mps")
+
+# Torch dtypes `dtype` may name; resolved to actual torch.dtype objects in
+# vlm.py so this module doesn't need to import torch just to validate a string.
+_DTYPES = ("float16", "bfloat16", "float32")
 
 # Flags validated as a group; bool is a subclass of int, so an explicit
 # isinstance check is the only way to reject `output_scores: 1`.
@@ -60,6 +66,16 @@ class VLMConfig:
             pass. None leaves the processor's own default in place, which for
             Qwen-VL processors is large enough to hit that failure mode on
             typical 16 GB cards.
+        dtype: Torch dtype to load the model in: "float16", "bfloat16", or
+            "float32". None picks the historical default (float16 on CUDA,
+            float32 elsewhere). Some model families (Gemma3 and models built
+            on it, e.g. MedGemma) overflow float16's range and silently
+            produce NaN logits -- decoding NaN logits argmaxes to a fixed
+            token (often <pad>) at every step, so generation looks like it
+            "returns nothing" with no error. Those families need "bfloat16".
+        prompt_template: This model's default prompt style, a key into
+            `prompts.PROMPTS` (e.g. "qwen", "medgemma"). None leaves the
+            choice to the caller (e.g. a `run_grounding` argument).
     """
 
     model_name: str
@@ -71,6 +87,8 @@ class VLMConfig:
     output_logits: bool = False
     min_pixels: int | None = None
     max_pixels: int | None = None
+    dtype: str | None = None
+    prompt_template: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the fields and apply the scores/logits implication.
@@ -138,6 +156,28 @@ class VLMConfig:
             value = getattr(self, name)
             if not isinstance(value, bool):
                 raise TypeError(f"{name} must be a bool, got {type(value).__name__}")
+
+        if self.dtype is not None:
+            if not isinstance(self.dtype, str):
+                raise TypeError(
+                    f"dtype must be a string or null, got {type(self.dtype).__name__}"
+                )
+            if self.dtype not in _DTYPES:
+                raise ValueError(
+                    f"dtype {self.dtype!r} is not one of {', '.join(_DTYPES)}"
+                )
+
+        if self.prompt_template is not None:
+            if not isinstance(self.prompt_template, str):
+                raise TypeError(
+                    f"prompt_template must be a string or null, got "
+                    f"{type(self.prompt_template).__name__}"
+                )
+            if self.prompt_template not in PROMPTS:
+                raise ValueError(
+                    f"prompt_template {self.prompt_template!r} is not a known "
+                    f"prompt style; available: {sorted(PROMPTS)}"
+                )
 
         # Asking for scores/logits without the dict form silently discards
         # them, so treat the request as implying it. Frozen dataclasses block
