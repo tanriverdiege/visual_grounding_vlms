@@ -45,7 +45,7 @@ num_workers: 2
 output_dir: ./output
 
 # --- inference ---
-model_weights: output/model_final.pth
+model_weights: output/keypoint_cnn.pth
 score_thresh: 0.8
 # Per-keypoint OKS sigmas for keypoint-AP evaluation, one per kpnames entry.
 # Left null -> uniform 1.0 per keypoint, an unmeasured placeholder (not
