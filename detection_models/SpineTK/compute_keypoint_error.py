@@ -8,6 +8,13 @@ straight-line pixel distance is recorded as that keypoint's error. Missed
 detections and false positives are counted separately, since a low mean
 error is meaningless if half the vertebrae were never detected at all.
 
+Each row also gets a normalized error: the x and y components are each
+divided by that image's width/height before taking the distance, so it's not
+dominated by whichever axis the image happens to be larger along. That makes
+error comparable across images of different resolution -- a raw pixel_error
+of 20px means very different things on a 500px-wide crop and a 4000px-wide
+scan, but the normalized error doesn't.
+
 Usage:
   python compute_keypoint_error.py <config.yaml> [--split test] [--csv errors.csv]
 
@@ -31,7 +38,7 @@ from split import make_split
 CSV_FIELDS = [
     "image_id", "vertebra", "keypoint",
     "gt_x", "gt_y", "pred_x", "pred_y", "pred_score",
-    "pixel_error", "match_iou",
+    "pixel_error", "normalized_error", "match_iou",
 ]
 
 
@@ -64,6 +71,7 @@ def main() -> None:
 
   rows = []
   per_keypoint_errors = {name: [] for name in config.kpnames}
+  per_keypoint_normalized_errors = {name: [] for name in config.kpnames}
   num_unmatched_gt = 0
   num_unmatched_pred = 0
 
@@ -72,6 +80,7 @@ def main() -> None:
     if im is None:
       print(f"WARNING: could not read {record['file_name']}, skipping")
       continue
+    height, width = im.shape[:2]
 
     outputs = predictor(im)
     instances = outputs["instances"].to("cpu")
@@ -93,11 +102,13 @@ def main() -> None:
         gx, gy = gt_kps[i * 3], gt_kps[i * 3 + 1]
         px, py, pscore = pred_kps[i]
         error = math.hypot(px - gx, py - gy)
+        normalized_error = math.hypot((px - gx) / width, (py - gy) / height)
         per_keypoint_errors[name].append(error)
+        per_keypoint_normalized_errors[name].append(normalized_error)
         rows.append({
             "image_id": record["image_id"], "vertebra": vertebra_label, "keypoint": name,
             "gt_x": gx, "gt_y": gy, "pred_x": px, "pred_y": py, "pred_score": pscore,
-            "pixel_error": error, "match_iou": iou,
+            "pixel_error": error, "normalized_error": normalized_error, "match_iou": iou,
         })
 
   with open(args.csv, "w", newline="") as f:
@@ -109,17 +120,30 @@ def main() -> None:
   print(f"Unmatched ground-truth vertebrae (missed detections): {num_unmatched_gt}")
   print(f"Unmatched predictions (false positives): {num_unmatched_pred}")
 
-  print("\nMean pixel error per keypoint:")
+  print("\nMean pixel error / normalized error per keypoint:")
   all_errors = []
+  all_normalized_errors = []
   for name, errors in per_keypoint_errors.items():
+    normalized_errors = per_keypoint_normalized_errors[name]
     if errors:
-      print(f"  {name}: {sum(errors) / len(errors):.2f}px (n={len(errors)})")
+      mean_error = sum(errors) / len(errors)
+      mean_normalized_error = sum(normalized_errors) / len(normalized_errors)
+      print(f"  {name}: {mean_error:.2f}px / {mean_normalized_error:.4f} (n={len(errors)})")
       all_errors.extend(errors)
+      all_normalized_errors.extend(normalized_errors)
     else:
       print(f"  {name}: no matched instances")
 
   if all_errors:
-    print(f"\nOverall mean pixel error: {sum(all_errors) / len(all_errors):.2f}px (n={len(all_errors)})")
+    print(
+        f"\nOverall mean pixel error: {sum(all_errors) / len(all_errors):.2f}px "
+        f"(n={len(all_errors)})"
+    )
+    print(
+        f"Overall mean normalized error: "
+        f"{sum(all_normalized_errors) / len(all_normalized_errors):.4f} "
+        f"(n={len(all_normalized_errors)})"
+    )
   else:
     print("\nNo matched instances at all - nothing to report.")
 
