@@ -1,5 +1,6 @@
 import json
 import os
+import random
 
 import pandas as pd
 from PIL import Image
@@ -34,6 +35,51 @@ def make_split(
     return train_ids, val_ids, test_ids
 
 
+def sample_csxa_image_paths(
+    baseline_directory: str,
+    num_examples: int,
+    seed: int = 42,
+) -> list[str]:
+    """
+    Randomly samples image paths from the CSXA baseline dataset's TEST split,
+    so images used to evaluate a VLM never overlap with SpineTK's train/val
+    images from the same baseline directory.
+    Args:
+        baseline_directory (str): Path to the CSXA baseline dataset directory,
+            e.g. "/data/datasets/csxa/spinetk_baseline". Passed straight to
+            make_split, so it must satisfy that function's requirements (a
+            top-level metadata.json), and each image_id's PNG must be at
+            "<baseline_directory>/<image_id>/src/0/src-0.png".
+        num_examples (int): Number of example image paths to select.
+        seed (int): Random seed, for a reproducible sample across runs.
+            Independent of make_split's own random_state=100, which controls
+            which ids land in the test split in the first place, not which
+            of them get selected here.
+    Returns:
+        list[str]: Paths to the selected images' src-0.png files.
+    Raises:
+        ValueError: If num_examples exceeds the number of test-split images.
+    """
+    _, _, test_ids = make_split(baseline_directory)
+    # make_split's ids come from pd.read_json(..., orient="index"), which
+    # infers an int64 index for metadata.json's purely-numeric string keys --
+    # silently dropping CSXA's leading zeros (e.g. "0212127" -> 212127). The
+    # on-disk <image_id> directories are always 7-digit zero-padded strings,
+    # so zfill(7) restores the id this function actually needs to look up.
+    image_ids = [str(image_id).zfill(7) for image_id in test_ids]
+
+    if num_examples > len(image_ids):
+        raise ValueError(
+            f"requested {num_examples} examples but only {len(image_ids)} "
+            f"test-split images are available in {baseline_directory}"
+        )
+
+    selected_ids = random.Random(seed).sample(image_ids, num_examples)
+
+    return [
+        os.path.join(baseline_directory, image_id, "src", "0", "src-0.png")
+        for image_id in selected_ids
+    ]
 
 
 def crop_bounding_box(image, bbox):
@@ -130,8 +176,8 @@ class CsxaXrayImage(XrayImage):
         self,
         vertebra_label: str,
         save_base_path: str | None = None,
-        padding: float = 0.5,
-        upscale: float = 3.0,
+        padding: float = 0.7,
+        upscale: float = 5.0,
     ) -> Image.Image:
         """
         Crops the image to the bounding box of the given vertebra, expanded
