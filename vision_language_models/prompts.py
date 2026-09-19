@@ -110,19 +110,19 @@ Step 1: Detect the spine and compute the smallest axis-aligned bounding box
 that contains it.
 
 Step 2: Within that spine bounding box, detect every individual visible
-vertebra and compute a separate bounding box for each one, in the same
+vertebra body and compute a separate bounding box for each one, in the same
 format as the spine's bounding box.
 
 Bounding-box definition:
 Each bounding box must be the smallest axis-aligned rectangle that contains
-the corresponding structure (the spine as a whole, or one vertebra).
+the corresponding structure (the spine as a whole, or one vertebra body).
 
 Detection requirements:
 - Return exactly one bounding box for the spine, labeled "spine".
 - Return exactly one bounding box per detected vertebra, labeled "vertebra".
 - Return valid JSON only.
-- Don't just return just the spine bounding box, also return the vertabrae bounding boxes.
-- Return at least one vertebra bounding box.
+- Don't just return the spine bounding box, also return the vertabra body bounding boxes.
+- Return at least one vertebra body bounding box.
 
 Use exactly this JSON schema:
 
