@@ -33,18 +33,13 @@ _TOKEN_BOX_RE = re.compile(
     r"<\|box_start\|>\((?P<x1>\d+),(?P<y1>\d+)\),\((?P<x2>\d+),(?P<y2>\d+)\)<\|box_end\|>"
 )
 
-# Distinct, high-contrast colors, cycled if there are more boxes than colors.
-_PALETTE = (
-    "#e6194b", "#3cb44b", "#4363d8", "#f58231",
-    "#911eb4", "#42d4f4", "#f032e6", "#bfef45",
-)
-
-# Fixed color for a box labeled "spine" (see "qwen_spine_vert_detection"),
-# rather than cycling it through _PALETTE like the per-vertebra boxes -- it
-# marks a different kind of region (the whole spine, not one vertebra) and
-# should read as one consistent color across runs instead of shifting with
-# however many other boxes came before it.
+# Fixed color for a box labeled "spine" (see "qwen_spine_vert_detection") --
+# it marks a different kind of region (the whole spine, not one vertebra) and
+# should read as one consistent color, distinct from the per-vertebra boxes.
 _SPINE_COLOR = "#000000"
+
+# Fixed color for all other (per-vertebra) boxes.
+_VERTEBRA_COLOR = "#ff0000"
 
 
 @dataclass
@@ -319,11 +314,6 @@ def _draw_one_box(
         _draw_dashed_rectangle(draw, coords, color, width=width)
     else:
         draw.rectangle(coords, outline=color, width=width)
-    label = box.label or ""
-    if box.partially_visible:
-        label = f"{label} (partial)".strip()
-    if label:
-        draw.text((box.x1 + 4, max(box.y1 - 12, 0)), label, fill=color)
 
 
 def draw_bounding_boxes(
@@ -334,14 +324,15 @@ def draw_bounding_boxes(
     """Draw boxes on a copy of `image`.
 
     A box with `partially_visible=True` (see the "qwen_all_vert_detection"
-    prompt style) is drawn with a dashed outline and "(partial)" appended to
-    its label, instead of the usual solid outline.
+    prompt style) is drawn with a dashed outline instead of the usual solid
+    outline.
 
     A box labeled "spine" (see "qwen_spine_vert_detection", which returns one
     spine box plus one box per vertebra in the same list) is drawn first, in a
-    fixed color (`_SPINE_COLOR`) rather than cycling through `_PALETTE`, so it
-    reads as a distinct "whole spine" region and the per-vertebra boxes drawn
-    on top of it stay visible.
+    fixed black color (`_SPINE_COLOR`); every other (per-vertebra) box is
+    drawn in a fixed red color (`_VERTEBRA_COLOR`), so the whole spine and the
+    individual vertebrae stay visually distinct regardless of how many boxes
+    are drawn. No labels are drawn on the image.
 
     Args:
         image: The ORIGINAL image the boxes' coordinates are relative to.
@@ -360,8 +351,8 @@ def draw_bounding_boxes(
 
     for box in spine_boxes:
         _draw_one_box(draw, box, _SPINE_COLOR, width=4)
-    for i, box in enumerate(other_boxes):
-        _draw_one_box(draw, box, _PALETTE[i % len(_PALETTE)], width=3)
+    for box in other_boxes:
+        _draw_one_box(draw, box, _VERTEBRA_COLOR, width=3)
 
     if output_path is not None:
         annotated.save(output_path)
