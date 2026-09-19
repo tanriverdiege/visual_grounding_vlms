@@ -18,13 +18,33 @@ QWEN_PROMPT_TEMPLATE = (
 
 # For use once the image has already been cropped down to a single vertebra
 # (e.g. via CsxaXrayImage.crop_to_bounding_box) -- there is no `target` to
-# describe since the crop already isolates it.
-QWEN_PROMPT_TEMPLATE_CROPPED_IMAGE = (
-    'This is a cropped X-ray image of a vertebra. Locate its '
-    'bounding box in this cropped image. Output ONLY JSON in this exact form, '
-    'with coordinates normalized to 0-1000: '
-    '[{{"bbox_2d": [x1, y1, x2, y2], "label": "..."}}]'
-)
+# describe since the crop already isolates it. Written in the same
+# requirements-list + explicit-schema style as QWEN_SPINE_VERT_DETECTION_PROMPT_TEMPLATE
+# below, rather than the terser one-liner form, and its output is wrapped in
+# a "detected" list for the same reason (_parse_json_boxes handles both the
+# bare-list and "detected"-wrapped forms).
+QWEN_PROMPT_TEMPLATE_CROPPED_IMAGE = """Analyze the provided cropped X-ray image,
+which contains a single vertebra.
+
+Bounding-box definition:
+Return the smallest axis-aligned rectangular bounding box that contains the
+entire visible vertebra.
+
+Detection requirements:
+- Detect the single vertebra visible in this cropped image.
+- Return exactly one bounding box.
+- Return valid JSON only.
+
+Use exactly this JSON schema:
+
+{
+  "detected": [
+    {
+      "label": "vertebra",
+      "bbox_2d": [x_min, y_min, x_max, y_max]
+    }
+  ]
+}"""
 
 # MedGemma's own localization notebook's exact prompt -- see
 # https://github.com/Google-Health/medgemma/blob/main/notebooks/cxr_anatomy_localization_with_hugging_face.ipynb
