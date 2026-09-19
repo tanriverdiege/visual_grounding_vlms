@@ -23,7 +23,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-from grounding import (
+from drawing import (
     draw_bounding_boxes,
     parse_bounding_boxes,
     save_predictions,
@@ -201,6 +201,12 @@ if __name__ == "__main__":
         help="Base directory the timestamped run directory is created "
         "under. Only used with --save. Default: runs",
     )
+
+    parser.add_argument(
+            "--crop",
+            action="store_true",
+            help="Cropped inference on bounding box.",
+        )
     args = parser.parse_args()
 
     # A single --target value broadcasts to every image (see
@@ -222,6 +228,36 @@ if __name__ == "__main__":
             baseline_directory="/data/datasets/csxa/spinetk_baseline",
             num_examples=args.num_images,
         )
+
+        if args.crop:
+            from data.scripts.utils import CsxaXrayImage
+
+            if target is None:
+                parser.error(
+                    "--crop requires --target (the vertebra to crop to, e.g. C3)"
+                )
+            # One label broadcasts to every image, same convention as
+            # run_vlm_object_detection's own target handling.
+            crop_labels = target if isinstance(target, list) else [target] * len(image_paths)
+
+            crop_dir = Path("examples/cropped_images")
+            crop_dir.mkdir(parents=True, exist_ok=True)
+
+            cropped_paths = []
+            for path, vertebra_label in zip(image_paths, crop_labels):
+                xray_image = CsxaXrayImage(path)
+                cropped_image = xray_image.crop_to_bounding_box(vertebra_label=vertebra_label)
+                # Every CSXA image is named "src-0.png"; the image_id (the
+                # grandparent-of-parent directory, see
+                # "<baseline_directory>/<image_id>/src/0/src-0.png") is what's
+                # actually unique per sampled image, so it's used here instead
+                # of the original filename to avoid collisions.
+                image_id = Path(path).parent.parent.parent.name
+                cropped_path = crop_dir / f"{image_id}_{vertebra_label}.png"
+                cropped_image.save(cropped_path)
+                cropped_paths.append(str(cropped_path))
+
+            image_paths = cropped_paths
 
     run_vlm_object_detection(
         config_path=args.config_path,
