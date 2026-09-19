@@ -219,3 +219,6 @@ __marimo__/
 
 # Images
 *.png
+
+# run_object_detection.py's --save-dir output
+runs/
