@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 import random
@@ -7,10 +5,6 @@ import random
 import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
-
-# Order CSXA's per-vertebra "keypoints" annotation is stored in -- matches
-# `kpnames` in detection_models/SpineTK/configs/csxa.yaml.
-_KEYPOINT_NAMES = ("bottom_left", "bottom_right", "top_right", "top_left")
 
 
 def make_split(
@@ -178,50 +172,6 @@ class CsxaXrayImage(XrayImage):
 
         return self.annotations
 
-    def get_corners(self, vertebra_label: str) -> dict[str, tuple[float, float]]:
-        """
-        Returns this vertebra's ground-truth corner coordinates, in ORIGINAL
-        (uncropped) image pixel coordinates.
-        Args:
-            vertebra_label (str): Vertebra to look up, e.g. "C3".
-        Returns:
-            dict[str, tuple[float, float]]: Corner name (see
-                `_KEYPOINT_NAMES`, e.g. "bottom_left") -> (x, y). A corner
-                CSXA marked not-labeled (visibility 0) is left out, the same
-                way a VLM reply can omit a corner it didn't return.
-        Raises:
-            ValueError: If `vertebra_label` isn't in this image's annotations.
-        """
-        if vertebra_label not in self.vertebra_labels:
-            raise ValueError(
-                f"{vertebra_label!r} not found in {self.image_path}; "
-                f"available labels: {self.vertebra_labels}"
-            )
-        index = self.vertebra_labels.index(vertebra_label)
-        flat = self.keypoints[index]  # [x, y, v, x, y, v, ...], _KEYPOINT_NAMES order
-        return {
-            name: (flat[i * 3], flat[i * 3 + 1])
-            for i, name in enumerate(_KEYPOINT_NAMES)
-            if flat[i * 3 + 2] > 0
-        }
-
-    def to_crop_coordinates(self, x: float, y: float) -> tuple[float, float]:
-        """
-        Maps a point in ORIGINAL image pixel coordinates (e.g. from
-        `get_corners`) into the local pixel coordinates of the most recent
-        `crop_to_bounding_box` call -- for drawing ground truth on top of
-        that crop, which is what the VLM actually saw.
-        Args:
-            x, y (float): A point in original-image pixel coordinates.
-        Returns:
-            tuple[float, float]: The same point, in the last crop's local
-            pixel coordinates (post-crop, post-upscale).
-        Raises:
-            AttributeError: If `crop_to_bounding_box` hasn't been called yet.
-        """
-        x_min, y_min, _, _ = self.last_crop_box
-        return (x - x_min) * self.last_crop_upscale, (y - y_min) * self.last_crop_upscale
-
     def crop_to_bounding_box(
         self,
         vertebra_label: str,
@@ -262,11 +212,6 @@ class CsxaXrayImage(XrayImage):
         y_min = max(0, y_min - pad_y)
         x_max = min(image_width, x_max + pad_x)
         y_max = min(image_height, y_max + pad_y)
-
-        # Recorded for to_crop_coordinates, so ground-truth points can be
-        # mapped into this crop after the fact.
-        self.last_crop_box = (x_min, y_min, x_max, y_max)
-        self.last_crop_upscale = upscale
 
         cropped_image = self.image.crop((x_min, y_min, x_max, y_max))
 

@@ -1,6 +1,29 @@
+"""Prompt templates for the grounding scripts in this folder.
+
+Centralizes the prompt wording so `run_grounding.py` and
+`run_grounding_zoom.py` (and anything else that grounds a VLM) pull from one
+place instead of keeping their own near-duplicate copies.
+"""
+
 from __future__ import annotations
 
-QWEN_CROPPED_VERT_BBOX_PROMPT_TEMPLATE = """Analyze the provided cropped X-ray image,
+# Qwen-VL grounds reliably when explicitly asked for this JSON shape; left
+# unprompted it more often falls back to the raw <|box_start|> token form
+# (parse_bounding_boxes still handles that, but it's less consistent).
+QWEN_PROMPT_TEMPLATE = (
+    'Locate {target} in the image. Output ONLY JSON in this exact form, '
+    'with coordinates normalized to 0-1000: '
+    '[{{"bbox_2d": [x1, y1, x2, y2], "label": "..."}}]'
+)
+
+# For use once the image has already been cropped down to a single vertebra
+# (e.g. via CsxaXrayImage.crop_to_bounding_box) -- there is no `target` to
+# describe since the crop already isolates it. Written in the same
+# requirements-list + explicit-schema style as QWEN_SPINE_VERT_DETECTION_PROMPT_TEMPLATE
+# below, rather than the terser one-liner form, and its output is wrapped in
+# a "detected" list for the same reason (_parse_json_boxes handles both the
+# bare-list and "detected"-wrapped forms).
+QWEN_PROMPT_TEMPLATE_CROPPED_IMAGE = """Analyze the provided cropped X-ray image,
 which contains a single vertebra.
 
 Bounding-box definition:
@@ -23,33 +46,37 @@ Use exactly this JSON schema:
   ]
 }"""
 
-QWEN_CROPPED_VERTEBRA_CORNERS = """Analyze the provided cropped X-ray image,
-which contains a single vertebra.
+# MedGemma's own localization notebook's exact prompt -- see
+# https://github.com/Google-Health/medgemma/blob/main/notebooks/cxr_anatomy_localization_with_hugging_face.ipynb
+# It differs from Qwen-VL's in convention (box_2d key, [y0, x0, y1, x1] order)
+# and in expecting free-text reasoning before a final fenced JSON block, not
+# JSON-only output; `parse_medgemma_boxes` matches this exact shape. The model
+# was trained on Chest ImaGenome's ~29 anatomical regions on frontal chest
+# X-rays (lungs, clavicles, spine, cardiac silhouette, mediastinum, hilar
+# structures, costophrenic angles, ...) -- targets outside that vocabulary
+# (e.g. "spinal cord", which is soft tissue and invisible on a plain
+# radiograph) won't localize reliably no matter how the prompt is phrased.
+MEDGEMMA_PROMPT_TEMPLATE = """Instructions:
+The following user query will require outputting bounding boxes.
+The format of bounding boxes coordinates is [y0, x0, y1, x1] where
+(y0, x0) must be top-left corner and (y1, x1) the bottom-right corner.
+This implies that x0 < x1 and y0 < y1. Always normalize the x and y coordinates the range [0, 1000],
+meaning that a bounding box starting at 15% of the image width would be associated with an x coordinate of 150.
+You MUST output a single parseable json list of objects enclosed into
+```json...``` brackets, for instance ```json[{{"box_2d": [800, 3, 840, 471], "label": "car"}},
+{{"box_2d": [400, 22, 600, 73], "label": "dog"}}]``` is a valid output. Now answer to the user query.
 
-Point definition:
-Identify the four corners of the vertebra body: bottom_left, bottom_right,
-top_right, and top_left.
+Remember "left" refers to the patient's left side where the heart is and
+sometimes underneath an L in the upper right corner of the image.
 
-Detection requirements:
-- Locate all four corners, even if a corner is only partially visible.
-- Return exactly one point per corner, labeled with its corner name.
-- Return valid JSON only.
-- Coordinates are normalized to the range 0-1000, relative to this image's
-  width and height.
+Query:
+Where is the {target}? Don't give a final answer without reasoning.
+Output the final answer in the format "Final Answer: X" where X is a JSON list of objects.
+The object needs a "box_2d" and "label" key. Answer:"""
 
-Use exactly this JSON schema:
-
-{
-  "detected": [
-    {"label": "bottom_left", "point_2d": [x, y]},
-    {"label": "bottom_right", "point_2d": [x, y]},
-    {"label": "top_right", "point_2d": [x, y]},
-    {"label": "top_left", "point_2d": [x, y]}
-  ]
-}"""
-
-
-QWEN_ALL_VERT_BBOX_PROMPT_TEMPLATE = """Analyze the provided X-ray and 
+# Detects every vertebra in one pass over a whole (uncropped) spine X-ray,
+# rather than the single-target QWEN_PROMPT_TEMPLATE. No `target` to fill in.
+QWEN_VERT_DETECTION_PROMPT_TEMPLATE = """Analyze the provided X-ray and 
 detect every visible vertebra.
 
 Bounding-box definition:
@@ -74,59 +101,20 @@ Use exactly this JSON schema:
   ]
 }"""
 
-# Flat point_2d list (Qwen-VL's native point-grounding form -- the same one
-# QWEN_CROPPED_VERTEBRA_CORNERS uses, which reliably returns non-empty
-# results), with a "<vertebra_index>_<corner_name>" compound label to say
-# which vertebra each point belongs to. An earlier version of this prompt
-# asked for each vertebra's 4 corners nested under a "corners": {...} object
-# per detected item; empirically that schema made the model return
-# "detected": [] on every single image, presumably because it's not the flat,
-# single-key-per-item shape Qwen-VL was actually trained to emit for
-# grounding (see the working QWEN_ALL_VERT_BBOX_PROMPT_TEMPLATE and
-# QWEN_CROPPED_VERTEBRA_CORNERS above for comparison) -- this flat form asks
-# for exactly that shape instead.
-QWEN_ALL_VERT_CORNERS_PROMPT_TEMPLATE = """Analyze the provided X-ray and
-detect every visible vertebra's corners.
-
-Point definition:
-For each vertebra, identify its four corners: bottom_left, bottom_right,
-top_right, and top_left.
-
-Detection requirements:
-- Detect all clearly visible vertebrae.
-- Number the vertebrae "1", "2", "3", and so on, from the top of the image to
-  the bottom.
-- For each vertebra, return one point per corner, labeled
-  "<vertebra_number>_<corner_name>", e.g. "1_bottom_left", "1_bottom_right",
-  "1_top_right", "1_top_left", "2_bottom_left", and so on.
-- Locate all four corners for each vertebra, even if a corner is only
-  partially visible.
-- Return valid JSON only.
-- Coordinates are normalized to the range 0-1000, relative to this image's
-  width and height.
-
-Use exactly this JSON schema:
-
-{
-  "detected": [
-    {"label": "1_bottom_left", "point_2d": [x, y]},
-    {"label": "1_bottom_right", "point_2d": [x, y]},
-    {"label": "1_top_right", "point_2d": [x, y]},
-    {"label": "1_top_left", "point_2d": [x, y]},
-    {"label": "2_bottom_left", "point_2d": [x, y]}
-  ]
-}"""
-
-QWEN_SPINE_BBOX_PROMPT_TEMPLATE = """Analyze the provided X-ray and
+QWEN_SPINE_DETECTION_PROMPT_TEMPLATE = """Analyze the provided X-ray and 
 detect the spine.
+
 Bounding-box definition:
 For the spine, return the smallest axis-aligned rectangular bounding box
 that contains the spine.
+
 Detection requirements:
 - Detect the spine.
 - Return exactly one bounding box.
 - Return valid JSON only.
+
 Use exactly this JSON schema:
+
 {
   "detected": [
     {
@@ -136,22 +124,28 @@ Use exactly this JSON schema:
   ]
 }"""
 
-QWEN_SPINE_VERT_BBOX_PROMPT_TEMPLATE = """Analyze the provided X-ray in two steps.
+QWEN_SPINE_VERT_DETECTION_PROMPT_TEMPLATE = """Analyze the provided X-ray in two steps.
+
 Step 1: Detect the spine and compute the smallest axis-aligned bounding box
 that contains it.
+
 Step 2: Within that spine bounding box, detect every individual visible
 vertebra body and compute a separate bounding box for each one, in the same
 format as the spine's bounding box.
+
 Bounding-box definition:
 Each bounding box must be the smallest axis-aligned rectangle that contains
 the corresponding structure (the spine as a whole, or one vertebra body).
+
 Detection requirements:
 - Return exactly one bounding box for the spine, labeled "spine".
 - Return exactly one bounding box per detected vertebra, labeled "vertebra".
 - Return valid JSON only.
 - Don't just return the spine bounding box, also return the vertabra body bounding boxes.
 - Return at least one vertebra body bounding box.
+
 Use exactly this JSON schema:
+
 {
   "detected": [
     {
@@ -165,30 +159,39 @@ Use exactly this JSON schema:
   ]
 }"""
 
+# Lookup by style name instead of importing each constant directly.
 PROMPTS = {
-    "qwen_crop_vert_bbox": QWEN_CROPPED_VERT_BBOX_PROMPT_TEMPLATE,
-    "qwen_crop_vert_corners": QWEN_CROPPED_VERTEBRA_CORNERS,
-    "qwen_all_vert_bbox": QWEN_ALL_VERT_BBOX_PROMPT_TEMPLATE,
-    "qwen_all_vert_corners": QWEN_ALL_VERT_CORNERS_PROMPT_TEMPLATE,
-    "qwen_spine_bbox": QWEN_SPINE_BBOX_PROMPT_TEMPLATE,
-    "qwen_spine_vert_bbox": QWEN_SPINE_VERT_BBOX_PROMPT_TEMPLATE,
+    "qwen": QWEN_PROMPT_TEMPLATE,
+    "qwen_cropped": QWEN_PROMPT_TEMPLATE_CROPPED_IMAGE,
+    "qwen_all_vert_detection": QWEN_VERT_DETECTION_PROMPT_TEMPLATE,
+    "qwen_spine_detection": QWEN_SPINE_DETECTION_PROMPT_TEMPLATE,
+    "qwen_spine_vert_detection": QWEN_SPINE_VERT_DETECTION_PROMPT_TEMPLATE,
+    "medgemma": MEDGEMMA_PROMPT_TEMPLATE,
 }
 
-def get_prompt(style: str) -> str:
+def get_prompt(style: str, **kwargs: str) -> str:
     """
-    Returns the prompt template registered under `style`. None of the
-    registered templates take a `target` (or any other placeholder) anymore
-    -- each one is self-contained (whole-image or already-cropped-to-one-
-    vertebra detection), so this is a plain lookup.
+    Returns the prompt template registered under `style`, with any of
+    `kwargs` filled in that the template actually has a placeholder for.
+    Placeholders not present in the template (e.g. "target" for a prompt like
+    "qwen_spine_detection" that doesn't need one) are silently ignored rather
+    than raising, so callers don't need to know which styles are parameterized.
     Args:
-        style (str): One of the keys in `PROMPTS`, e.g. "qwen_crop_vert_bbox",
-            "qwen_all_vert_corners".
+        style (str): One of the keys in `PROMPTS`, e.g. "qwen", "qwen_cropped",
+            "qwen_spine_detection", "medgemma".
+        **kwargs: Values to substitute for any "{name}" placeholders the
+            template contains, e.g. target="C3".
     Returns:
-        str: The prompt template.
+        str: The prompt, with matching placeholders substituted.
     """
     try:
-        return PROMPTS[style]
+        template = PROMPTS[style]
     except KeyError:
         raise KeyError(
             f"{style!r} is not a known prompt style; available: {sorted(PROMPTS)}"
         ) from None
+
+    present_kwargs = {name: value for name, value in kwargs.items() if f"{{{name}}}" in template}
+    if not present_kwargs:
+        return template
+    return template.format(**present_kwargs)

@@ -39,7 +39,7 @@ device: null
 # small/closely-packed objects can still be lost at this budget. Re-run the
 # sweep (see vlm.py conversation history / ask Claude to repeat it) if you
 # change the model, the GPU, or need more resolution than this.
-min_pixels: 802816  # 1024 * 28 * 28
+min_pixels: 200704  # 256 * 28 * 28
 max_pixels: 2744000  # 3500 * 28 * 28
 
 # --- generation ---
@@ -54,7 +54,7 @@ max_new_tokens: 4096
 # Return a structured output from generate() instead of a bare tensor. Forced
 # on automatically when either of the two below is true, since scores and
 # logits are only reachable through the structured form.
-return_dict_in_generate: false
+return_dict_in_generate: true
 
 # Per-step distributions *after* logits processors -- what sampling saw.
 # Needed for VLMOutput.token_confidences() and .mean_confidence().
@@ -66,4 +66,4 @@ output_logits: false
 # --- prompting ---
 # Key into prompts.PROMPTS -- see prompts.py for the template text. Used as
 # run_grounding.py's default when its own prompt_template argument is null.
-prompt_template: qwen_spine_vert_bbox
+prompt_template: qwen_spine_vert_detection
