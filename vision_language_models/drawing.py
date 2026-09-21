@@ -32,6 +32,10 @@ _TOKEN_BOX_RE = re.compile(
     r"(?:<\|object_ref_start\|>(?P<label>.*?)<\|object_ref_end\|>)?"
     r"<\|box_start\|>\((?P<x1>\d+),(?P<y1>\d+)\),\((?P<x2>\d+),(?P<y2>\d+)\)<\|box_end\|>"
 )
+_TOKEN_POINT_RE = re.compile(
+    r"(?:<\|object_ref_start\|>(?P<label>.*?)<\|object_ref_end\|>)?"
+    r"<\|point_start\|>\((?P<x>\d+),(?P<y>\d+)\)<\|point_end\|>"
+)
 
 # Fixed color for a box labeled "spine" (see "qwen_spine_vert_detection") --
 # it marks a different kind of region (the whole spine, not one vertebra) and
@@ -40,6 +44,25 @@ _SPINE_COLOR = "#000000"
 
 # Fixed color for all other (per-vertebra) boxes.
 _VERTEBRA_COLOR = "#ff0000"
+
+# Order matches `kpnames` in detection_models/SpineTK/configs/csxa.yaml, and
+# the "qwen_crop_vert_corners" / "qwen_all_vert_corners" prompts' own
+# schemas.
+_CORNER_ORDER = ("bottom_left", "bottom_right", "top_right", "top_left")
+_CORNER_COLOR = "#ff0000"
+# Sized so a predicted dot at this radius comfortably nests inside a
+# ground-truth hollow circle of run_object_detection.py's _GT_RADIUS (see
+# that module) when a prediction lands on/near its ground truth -- see this
+# constant's docstring there for the full radius relationship.
+_CORNER_RADIUS = 8
+
+# Default color for a ground-truth overlay -- draw_vertebra_corners' /
+# draw_all_vertebra_corners' `color` argument, and draw_bounding_boxes'
+# `color` argument (which overrides its usual spine/vertebra split). Distinct
+# from both _CORNER_COLOR and _SPINE_COLOR/_VERTEBRA_COLOR so a predicted and
+# a ground-truth layer stay visually distinguishable when drawn on the same
+# image.
+_GT_COLOR = "#39ff14"  # neon green -- more visible against an X-ray than a duller green
 
 
 @dataclass
@@ -62,6 +85,57 @@ class BoundingBox:
     y2: int
     label: str | None = None
     partially_visible: bool | None = None
+
+
+@dataclass
+class KeyPoint:
+    """One detected point, already in ORIGINAL-image pixel coordinates.
+
+    Used for the "qwen_crop_vert_corners" prompt style, which asks for a
+    vertebra's 4 corners (Qwen-VL's "point_2d" form) instead of a box.
+
+    Attributes:
+        x, y: Pixel coordinates of the original image (top-left origin),
+            post-rescale.
+        label: Free-text description of the point, if the model gave one
+            (e.g. "bottom_left").
+    """
+
+    x: int
+    y: int
+    label: str | None = None
+
+
+@dataclass
+class VertebraCorners:
+    """One vertebra's 4 corner points, already in ORIGINAL-image pixel coordinates.
+
+    Used for the "qwen_all_vert_corners" prompt style, which
+    (unlike "qwen_crop_vert_corners") detects every vertebra in one pass over
+    an uncropped spine X-ray -- so each vertebra's corners need to stay
+    grouped under it, rather than returned as one flat point list the way
+    `parse_keypoints` does for a single already-isolated vertebra.
+
+    Attributes:
+        label: The vertebra's label from the model (e.g. "1", "2", ...
+            top-to-bottom, the same convention as "qwen_all_vert_detection").
+        bottom_left, bottom_right, top_right, top_left: This vertebra's 4
+            corners, or None if the model didn't return that one.
+    """
+
+    label: str | None = None
+    bottom_left: KeyPoint | None = None
+    bottom_right: KeyPoint | None = None
+    top_right: KeyPoint | None = None
+    top_left: KeyPoint | None = None
+
+    def corners(self) -> list[KeyPoint]:
+        """This vertebra's present corners, in `_CORNER_ORDER`."""
+        return [
+            point
+            for point in (self.bottom_left, self.bottom_right, self.top_right, self.top_left)
+            if point is not None
+        ]
 
 
 def _rescale(
@@ -123,6 +197,122 @@ def _parse_token_boxes(text: str, width: int, height: int) -> list[BoundingBox]:
         )
         for m in _TOKEN_BOX_RE.finditer(text)
     ]
+
+
+def _rescale_point(x: float, y: float, width: int, height: int) -> tuple[int, int]:
+    """Map a [0, 1000]-normalized point to pixel coordinates of a `width`x`height` image."""
+    return round(x / 1000 * width), round(y / 1000 * height)
+
+
+def _parse_json_points(text: str, width: int, height: int) -> list[KeyPoint]:
+    # Mirrors _parse_json_boxes, but for the "point_2d" form the
+    # "qwen_crop_vert_corners" prompt style asks for instead of "bbox_2d".
+    candidates = [m.group(1) for m in _JSON_FENCE_RE.finditer(text)]
+    candidates.append(text)
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate.strip())
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            for key in ("detected", "vertebrae"):
+                if isinstance(data.get(key), list):
+                    data = data[key]
+                    break
+            else:
+                data = [data]
+        if not isinstance(data, list):
+            continue
+        points = [
+            KeyPoint(
+                *_rescale_point(*item["point_2d"], width=width, height=height),
+                label=item.get("label"),
+            )
+            for item in data
+            if isinstance(item, dict) and "point_2d" in item
+        ]
+        if points:
+            return points
+    return []
+
+
+def _parse_token_points(text: str, width: int, height: int) -> list[KeyPoint]:
+    return [
+        KeyPoint(
+            *_rescale_point(int(m["x"]), int(m["y"]), width=width, height=height),
+            label=m["label"],
+        )
+        for m in _TOKEN_POINT_RE.finditer(text)
+    ]
+
+
+def parse_keypoints(text: str, image_width: int, image_height: int) -> list[KeyPoint]:
+    """Extract points from a Qwen-VL-style point-grounding reply.
+
+    Tries the JSON form first since it's unambiguous to parse; falls back to
+    the raw special-token form only if no JSON points were found. See
+    `parse_bounding_boxes`, which this mirrors for the "point_2d" form used by
+    the "qwen_crop_vert_corners" and "qwen_all_vert_corners" prompt styles.
+
+    Args:
+        text: The model's decoded reply (`VLMOutput.text`).
+        image_width: Width, in pixels, of the ORIGINAL image shown to the
+            model (e.g. `VLMOutput.image_sizes[i][0]`).
+        image_height: Height, in pixels, of that original image.
+
+    Returns:
+        One `KeyPoint` per detected point, in original-image pixel
+        coordinates. Empty if neither form matched.
+    """
+    return _parse_json_points(text, image_width, image_height) or _parse_token_points(
+        text, image_width, image_height
+    )
+
+
+def parse_vertebra_corners(
+    text: str, image_width: int, image_height: int
+) -> list[VertebraCorners]:
+    """Extract per-vertebra corner points from a "qwen_all_vert_corners" reply.
+
+    Unlike `parse_keypoints` (one already-isolated vertebra's 4 corners, with
+    no need to say which vertebra they belong to), a whole-image reply can
+    describe more than one vertebra. An earlier version of this parser
+    expected each vertebra's corners nested under a `"corners"` object per
+    detected item, matching an earlier version of the "qwen_all_vert_corners"
+    prompt -- empirically, that schema made the model return "detected": []
+    on every image, so the prompt (and this parser) now use Qwen-VL's native
+    flat `"point_2d"` form instead (like `parse_keypoints`), with each point's
+    `label` carrying a `"<vertebra_number>_<corner_name>"` compound key (e.g.
+    "1_bottom_left") to say which vertebra it belongs to.
+
+    Args:
+        text: The model's decoded reply (`VLMOutput.text`).
+        image_width: Width, in pixels, of the ORIGINAL image shown to the
+            model.
+        image_height: Height, in pixels, of that original image.
+
+    Returns:
+        One `VertebraCorners` per distinct vertebra number seen, in
+        original-image pixel coordinates and in first-seen order. Empty if
+        nothing parsed.
+    """
+    points = parse_keypoints(text, image_width, image_height)
+
+    grouped: dict[str, dict[str, KeyPoint]] = {}
+    order: list[str] = []
+    for point in points:
+        if not point.label or "_" not in point.label:
+            continue
+        vertebra_number, corner_name = point.label.split("_", 1)
+        corner_name = corner_name.lower()
+        if corner_name not in _CORNER_ORDER:
+            continue
+        if vertebra_number not in grouped:
+            grouped[vertebra_number] = {}
+            order.append(vertebra_number)
+        grouped[vertebra_number][corner_name] = KeyPoint(point.x, point.y, label=corner_name)
+
+    return [VertebraCorners(label=number, **grouped[number]) for number in order]
 
 
 def parse_medgemma_boxes(
@@ -320,6 +510,7 @@ def draw_bounding_boxes(
     image: Image.Image,
     boxes: Iterable[BoundingBox],
     output_path: str | Path | None = None,
+    color: str | None = None,
 ) -> Image.Image:
     """Draw boxes on a copy of `image`.
 
@@ -338,6 +529,11 @@ def draw_bounding_boxes(
         image: The ORIGINAL image the boxes' coordinates are relative to.
         boxes: Boxes to draw, as returned by `parse_bounding_boxes`.
         output_path: If given, save the annotated image there.
+        color: If given, overrides the spine/vertebra color split above and
+            draws every box in this one color instead -- for a ground-truth
+            overlay (pass `_GT_COLOR`) that should read as one consistent
+            layer regardless of label, distinguishable from a predicted
+            layer drawn separately in the usual colors.
 
     Returns:
         A new RGB image with the boxes drawn; `image` is left untouched.
@@ -350,9 +546,129 @@ def draw_bounding_boxes(
     other_boxes = [b for b in boxes if (b.label or "").lower() != "spine"]
 
     for box in spine_boxes:
-        _draw_one_box(draw, box, _SPINE_COLOR, width=4)
+        _draw_one_box(draw, box, color or _SPINE_COLOR, width=4)
     for box in other_boxes:
-        _draw_one_box(draw, box, _VERTEBRA_COLOR, width=3)
+        _draw_one_box(draw, box, color or _VERTEBRA_COLOR, width=3)
+
+    if output_path is not None:
+        annotated.save(output_path)
+    return annotated
+
+
+def draw_vertebra_corners(
+    image: Image.Image,
+    points: Iterable[KeyPoint],
+    output_path: str | Path | None = None,
+    color: str = _CORNER_COLOR,
+    draw_outline: bool = True,
+    radius: int = _CORNER_RADIUS,
+    filled: bool = True,
+    line_width: int = 3,
+) -> Image.Image:
+    """Draw a vertebra's 4 corner points, connected into a quadrilateral.
+
+    Unlike `draw_bounding_boxes`, this draws whatever quadrilateral the 4
+    corners actually form -- including a rotated one -- rather than forcing
+    an axis-aligned rectangle, since a vertebra's true outline is often
+    rotated relative to the image axes (scoliosis, patient positioning).
+
+    Args:
+        image: The image the points' coordinates are relative to (typically
+            a crop already isolating one vertebra, e.g. from
+            `CsxaXrayImage.crop_to_bounding_box`).
+        points: Points to draw, as returned by `parse_keypoints`. Matched to
+            corners by `label` (e.g. "bottom_left"), case-insensitively; the
+            connecting quadrilateral is only drawn once all 4 named corners
+            are present, but every point is drawn as a dot regardless.
+        output_path: If given, save the annotated image there.
+        color: Outline/fill color. Defaults to `_CORNER_COLOR`; pass
+            `_GT_COLOR` (or call this a second time on the already-
+            annotated image) to layer a ground-truth overlay in a
+            distinguishable color from a predicted layer.
+        draw_outline: If False, only the corner dots are drawn, not the
+            connecting quadrilateral -- for a ground-truth overlay that
+            should read as raw annotated points, not a derived shape.
+        radius: Dot radius, in pixels. Defaults to `_CORNER_RADIUS`; pass a
+            larger value on a crop that's been upscaled (e.g.
+            `CsxaXrayImage.crop_to_bounding_box`'s `upscale`), so the dots
+            stay proportionally visible instead of looking tiny relative to
+            the enlarged image.
+        filled: If False, each point is drawn as a hollow (outline-only)
+            circle instead of a filled dot -- for a ground-truth overlay
+            that should stay visually distinct from a filled predicted dot
+            even in the same color.
+        line_width: Outline thickness, in pixels, for a hollow circle
+            (`filled=False`); ignored when `filled=True`. A thin default can
+            get hard to see against a busy X-ray, especially at a larger
+            `radius`.
+
+    Returns:
+        A new RGB image with the corner points (and, if `draw_outline` and
+        all 4 named corners are present, the connecting quadrilateral)
+        drawn; `image` is left untouched.
+    """
+    annotated = image.convert("RGB").copy()
+    draw = ImageDraw.Draw(annotated)
+
+    points = list(points)
+    by_label = {(p.label or "").lower(): p for p in points}
+    ordered = [by_label[name] for name in _CORNER_ORDER if name in by_label]
+
+    if draw_outline and len(ordered) == len(_CORNER_ORDER):
+        draw.polygon([(p.x, p.y) for p in ordered], outline=color, width=3)
+
+    for p in points:
+        bbox = (p.x - radius, p.y - radius, p.x + radius, p.y + radius)
+        if filled:
+            draw.ellipse(bbox, fill=color)
+        else:
+            draw.ellipse(bbox, outline=color, width=line_width)
+
+    if output_path is not None:
+        annotated.save(output_path)
+    return annotated
+
+
+def draw_all_vertebra_corners(
+    image: Image.Image,
+    vertebrae: Iterable[VertebraCorners],
+    output_path: str | Path | None = None,
+    color: str = _CORNER_COLOR,
+    draw_outline: bool = True,
+    radius: int = _CORNER_RADIUS,
+    filled: bool = True,
+    line_width: int = 3,
+) -> Image.Image:
+    """Draw every vertebra's corner quadrilateral on a copy of `image`.
+
+    Applies `draw_vertebra_corners`' drawing convention to each vertebra
+    independently, for the "qwen_all_vert_corners" prompt style's
+    whole-image, multi-vertebra replies.
+
+    Args:
+        image: The ORIGINAL (uncropped) image the points are relative to.
+        vertebrae: Vertebrae to draw, as returned by `parse_vertebra_corners`.
+        output_path: If given, save the annotated image there.
+        color: Outline/fill color; see `draw_vertebra_corners`.
+        draw_outline: If False, only draw each vertebra's corner dots, not
+            its connecting quadrilateral; see `draw_vertebra_corners`.
+        radius: Dot radius, in pixels; see `draw_vertebra_corners`.
+        filled: If False, draw hollow (outline-only) circles; see
+            `draw_vertebra_corners`.
+        line_width: Hollow-circle outline thickness; see
+            `draw_vertebra_corners`.
+
+    Returns:
+        A new RGB image with every vertebra's corners drawn; `image` is left
+        untouched.
+    """
+    annotated = image.convert("RGB").copy()
+    for vertebra in vertebrae:
+        annotated = draw_vertebra_corners(
+            annotated, vertebra.corners(),
+            color=color, draw_outline=draw_outline, radius=radius,
+            filled=filled, line_width=line_width,
+        )
 
     if output_path is not None:
         annotated.save(output_path)
