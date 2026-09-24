@@ -5,7 +5,7 @@ set -e
 
 # Single image, single target, save the annotated output + predictions.jsonl.
 python run_object_detection.py \
-    --config-path configs/qwen_3_vl_4b_instruct.yaml \
+    --config-path configs/qwen_3_vl_4b_instruct_lora_vert_corners.yaml \
     --dataset csxa \
     --num-images 10 \
     --save \

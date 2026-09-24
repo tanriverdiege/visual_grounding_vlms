@@ -1,0 +1,33 @@
+# Qwen3-VL-4B-Instruct + the vertebra-corner LoRA adapter trained by
+# lora/train_lora.py (config: lora/configs/qwen_3_vl_4b_vert_corners.yaml).
+# Everything except adapter_path and prompt_template matches
+# qwen_3_vl_4b_instruct.yaml -- see that file for what each key means.
+
+# --- model ---
+# Must be the base model the adapter was trained on.
+model_name: Qwen/Qwen3-VL-4B-Instruct
+device: null
+
+# LoRA adapter directory (adapter_config.json + adapter_model.safetensors),
+# merged into the base weights at load time. Absolute, since the inference
+# scripts are run from vision_language_models/, not the repo root.
+adapter_path: /home/ege/visual_grounding_vlms/lora/runs/qwen3_vl_4b_vert_corners/final
+
+# --- image resolution ---
+# Same bounds the adapter was trained with.
+min_pixels: 802816  # 1024 * 28 * 28
+max_pixels: 2744000  # 3500 * 28 * 28
+
+# --- generation ---
+do_sample: false
+max_new_tokens: 4096
+
+# --- diagnostics ---
+return_dict_in_generate: false
+output_scores: false
+output_logits: false
+
+# --- prompting ---
+# The adapter was trained on exactly this prompt (whole image, every
+# vertebra's corners, numbered top to bottom); other prompts are untested.
+prompt_template: qwen_all_vert_corners

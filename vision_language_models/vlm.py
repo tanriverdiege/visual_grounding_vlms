@@ -107,7 +107,19 @@ class VLM:
         )
         self.model = AutoModelForImageTextToText.from_pretrained(
             config.model_name, dtype=self.dtype
-        ).to(self.device)  # type: ignore[arg-type]
+        )
+        if config.adapter_path is not None:
+            # Imported lazily so peft is only required when an adapter is
+            # actually used. merge_and_unload folds the LoRA deltas into the
+            # base weights and returns the plain transformers model, so
+            # inference runs at base-model speed and everything downstream
+            # (generate, compute_transition_scores, ...) is unchanged.
+            from peft import PeftModel
+
+            self.model = PeftModel.from_pretrained(
+                self.model, config.adapter_path
+            ).merge_and_unload()
+        self.model = self.model.to(self.device)  # type: ignore[arg-type]
         self.model.eval()
 
     def _pick_device(self, requested: str | None) -> str:

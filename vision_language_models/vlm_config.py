@@ -76,6 +76,12 @@ class VLMConfig:
         prompt_template: This model's default prompt style, a key into
             `prompts.PROMPTS` (e.g. "qwen", "medgemma"). None leaves the
             choice to the caller (e.g. a `run_grounding` argument).
+        adapter_path: Directory of a trained LoRA adapter (the `final/`
+            directory lora/train_lora.py writes, holding
+            adapter_config.json + adapter_model.safetensors). Applied on top
+            of `model_name` at load time and merged into its weights. The
+            adapter must have been trained on this same base model. None runs
+            the base model as-is.
     """
 
     model_name: str
@@ -89,6 +95,7 @@ class VLMConfig:
     max_pixels: int | None = None
     dtype: str | None = None
     prompt_template: str | None = None
+    adapter_path: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the fields and apply the scores/logits implication.
@@ -177,6 +184,21 @@ class VLMConfig:
                 raise ValueError(
                     f"prompt_template {self.prompt_template!r} is not a known "
                     f"prompt style; available: {sorted(PROMPTS)}"
+                )
+
+        if self.adapter_path is not None:
+            if not isinstance(self.adapter_path, str):
+                raise TypeError(
+                    f"adapter_path must be a string or null, got "
+                    f"{type(self.adapter_path).__name__}"
+                )
+            # Checked here rather than at load time so a typo'd path fails
+            # before the multi-GB base model has been loaded.
+            if not (Path(self.adapter_path) / "adapter_config.json").is_file():
+                raise ValueError(
+                    f"adapter_path {self.adapter_path!r} has no "
+                    "adapter_config.json; expected a peft adapter directory "
+                    "such as lora/runs/<run>/final"
                 )
 
         # Asking for scores/logits without the dict form silently discards

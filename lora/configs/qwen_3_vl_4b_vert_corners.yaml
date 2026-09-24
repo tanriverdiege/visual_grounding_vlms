@@ -1,0 +1,68 @@
+# LoRA training config for train_lora.py. Load with:
+#
+#   from lora_config import LoraTrainingConfig
+#   config = LoraTrainingConfig.from_yaml("lora/configs/qwen_3_vl_4b_vert_corners.yaml")
+#
+# Any key left out keeps its default from lora_config.py. Unknown keys are an
+# error, not a warning -- a typo'd key would otherwise be a setting that
+# silently did not apply.
+
+# --- model / data ---
+model_name: Qwen/Qwen3-VL-4B-Instruct
+# JSONL written by z_prepare_lora_data.py.
+data_path: /data/datasets/csxa/lora/lora_vert_corners.jsonl
+# make_split reads <baseline_dir>/metadata.json for the train/val/test ids --
+# the same split run_object_detection.py evaluates on (test), so the test
+# images are never trained on.
+baseline_dir: /data/datasets/csxa/spinetk_baseline
+output_dir: lora/runs/qwen3_vl_4b_vert_corners
+
+# --- image resolution ---
+# Same as vision_language_models/configs/qwen_3_vl_4b_instruct.yaml: train at
+# the resolution the adapter will be evaluated at. Lower max_pixels if
+# training runs out of memory (and lower it in the inference config too).
+min_pixels: 802816   # 1024 * 28 * 28
+max_pixels: 2744000  # 3500 * 28 * 28
+
+# --- optimization ---
+epochs: 3
+# Write floats with a decimal point: PyYAML reads a bare "1e-4" as a string.
+lr: 1.0e-4
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+weight_decay: 0.0
+# Effective batch size = n_gpus * batch_size * grad_accum.
+#   8 GPUs (torchrun --nproc_per_node=8): grad_accum 1 -> 8
+#   1 GPU:                                grad_accum 8 -> 8
+batch_size: 1
+grad_accum: 2
+
+# --- LoRA ---
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+# LLM-side projections only; the vision encoder stays frozen.
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+# --- eval / checkpointing / logging ---
+# Val loss is computed and a checkpoint saved every eval_steps optimizer
+# steps; the best checkpoint by val loss is reloaded at the end.
+eval_steps: 200
+save_total_limit: 3
+logging_steps: 10
+dataloader_num_workers: 4
+
+# --- smoke testing ---
+# Truncate the splits for a quick end-to-end check, e.g. 16 and 8.
+# null = use the whole split.
+max_train_samples: null
+max_val_samples: null
+
+seed: 42

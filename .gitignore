@@ -222,3 +222,6 @@ __marimo__/
 
 # run_object_detection.py's --save-dir output
 runs/
+
+# Model weights
+*.pth
