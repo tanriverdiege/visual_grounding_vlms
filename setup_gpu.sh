@@ -14,7 +14,7 @@
 # torch, then layer everything else on top.
 set -euo pipefail
 
-ENV_NAME="${ENV_NAME:-visual-grounding-vlms}"
+ENV_NAME="${ENV_NAME:-vlm}"
 WITH_VLLM=0
 [[ "${1:-}" == "--vllm" ]] && WITH_VLLM=1
 
