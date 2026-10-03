@@ -36,7 +36,9 @@ def main() -> None:
     config = SpineTKConfig.from_yaml(sys.argv[1])
     setup_logger()
 
-    x_train, x_val, x_test = make_split(config.baseline_directory)
+    x_train, x_val, x_test = make_split(
+        config.baseline_directory, config.val_fraction, config.test_fraction
+    )
 
     vert_metadata = setup_catalogs(config, x_train, x_val, x_test)
 
