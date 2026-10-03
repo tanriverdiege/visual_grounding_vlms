@@ -15,11 +15,14 @@ def train(config: SpineTKConfig) -> None:
     cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(config.model_zoo_config)
     cfg.SOLVER.IMS_PER_BATCH = config.ims_per_batch
     cfg.SOLVER.BASE_LR = config.base_lr
+    cfg.SOLVER.WARMUP_ITERS = config.warmup_iters
     cfg.SOLVER.MAX_ITER = config.iters
     cfg.SOLVER.STEPS = []
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = config.batch_size_per_image
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = config.num_classes
     cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = config.num_keypoints
+    cfg.INPUT.MIN_SIZE_TRAIN = tuple(config.min_size_train)
+    cfg.INPUT.MAX_SIZE_TRAIN = config.max_size_train
     cfg.OUTPUT_DIR = config.output_dir
 
     os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
