@@ -26,6 +26,8 @@ def inference(config: SpineTKConfig) -> DefaultPredictor:
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = config.batch_size_per_image
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = config.num_classes
     cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = config.num_keypoints
+    cfg.INPUT.MIN_SIZE_TEST = config.min_size_test
+    cfg.INPUT.MAX_SIZE_TEST = config.max_size_test
 
     cfg.MODEL.WEIGHTS = config.model_weights
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = config.score_thresh
