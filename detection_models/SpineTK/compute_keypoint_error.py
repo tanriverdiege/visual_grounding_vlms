@@ -62,7 +62,9 @@ def main() -> None:
   args = parse_args()
   config = SpineTKConfig.from_yaml(args.config)
 
-  x_train, x_val, x_test = make_split(config.baseline_directory)
+  x_train, x_val, x_test = make_split(
+      config.baseline_directory, config.val_fraction, config.test_fraction
+  )
   setup_catalogs(config, x_train, x_val, x_test)
   dataset_dicts = DatasetCatalog.get(f"vert{config.version}_{args.split}")
   print(f"Evaluating on {len(dataset_dicts)} images from the '{args.split}' split.")
