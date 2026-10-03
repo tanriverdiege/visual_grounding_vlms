@@ -12,7 +12,7 @@ length) across several files; deriving it removes that whole bug class.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -34,12 +34,27 @@ class SpineTKConfig:
             it is not a separate field, so it can never drift out of sync.
         version: Dataset/catalog version tag Detectron2's DatasetCatalog
             registers names under, e.g. "v1" -> "vertv1_train".
+        val_fraction: Fraction of all images that goes to val. The default
+            reproduces the original ~70/10/20 split.
+        test_fraction: Fraction of all images that goes to test.
         model_zoo_config: Detectron2 model zoo config name to start from.
         num_classes: Number of object classes (SpineTK has one: "vertebrae").
+        min_size_train: Shorter-side sizes Detectron2 picks from at random per
+            training image (INPUT.MIN_SIZE_TRAIN).
+        max_size_train: Cap on the longer side during training
+            (INPUT.MAX_SIZE_TRAIN). Applied after min_size_train, so for tall
+            images like full-spine X-rays this is usually what sets the size.
+        min_size_test: Shorter-side size at inference (INPUT.MIN_SIZE_TEST).
+        max_size_test: Cap on the longer side at inference
+            (INPUT.MAX_SIZE_TEST). Keep the test sizes consistent with the
+            training ones, or vertebrae appear at a scale the model never saw.
         iters: Number of training iterations.
         resume: Resume training from an existing checkpoint if one is found.
         ims_per_batch: Images per training batch.
         base_lr: Base learning rate.
+        warmup_iters: Iterations over which the learning rate ramps up
+            linearly to base_lr (SOLVER.WARMUP_ITERS). The default is
+            Detectron2's own.
         batch_size_per_image: ROI head batch size per image.
         num_workers: Data loader worker count.
         output_dir: Where checkpoints get written.
@@ -59,14 +74,25 @@ class SpineTKConfig:
     baseline_directory: str
     kpnames: list[str]
     version: str = "v1"
+    val_fraction: float = 0.08 / 0.7
+    test_fraction: float = 0.2
 
     model_zoo_config: str = "COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml"
     num_classes: int = 1
+
+    # Defaults are Detectron2's own for the COCO keypoint configs.
+    min_size_train: list[int] = field(
+        default_factory=lambda: [640, 672, 704, 736, 768, 800]
+    )
+    max_size_train: int = 1333
+    min_size_test: int = 800
+    max_size_test: int = 1333
 
     iters: int = 1300
     resume: bool = True
     ims_per_batch: int = 2
     base_lr: float = 0.00025
+    warmup_iters: int = 1000
     batch_size_per_image: int = 512
     num_workers: int = 2
     output_dir: str = "./output"
@@ -116,7 +142,41 @@ class SpineTKConfig:
                 f"version must be a non-empty string, got {self.version!r}"
             )
 
-        for name in ("iters", "batch_size_per_image", "num_classes"):
+        for name in ("val_fraction", "test_fraction"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not (0.0 < value < 1.0)
+            ):
+                raise ValueError(f"{name} must be between 0 and 1, got {value!r}")
+        if self.val_fraction + self.test_fraction >= 1.0:
+            raise ValueError(
+                f"val_fraction + test_fraction must be below 1 to leave a train "
+                f"split, got {self.val_fraction} + {self.test_fraction}"
+            )
+
+        if (
+            not isinstance(self.min_size_train, list)
+            or not self.min_size_train
+            or not all(
+                isinstance(s, int) and not isinstance(s, bool) and s > 0
+                for s in self.min_size_train
+            )
+        ):
+            raise ValueError(
+                f"min_size_train must be a non-empty list of positive ints, "
+                f"got {self.min_size_train!r}"
+            )
+
+        for name in (
+            "iters",
+            "batch_size_per_image",
+            "num_classes",
+            "max_size_train",
+            "min_size_test",
+            "max_size_test",
+        ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive int, got {value!r}")
@@ -128,6 +188,15 @@ class SpineTKConfig:
         ):
             raise ValueError(
                 f"ims_per_batch must be a positive int, got {self.ims_per_batch!r}"
+            )
+
+        if (
+            isinstance(self.warmup_iters, bool)
+            or not isinstance(self.warmup_iters, int)
+            or self.warmup_iters < 0
+        ):
+            raise ValueError(
+                f"warmup_iters must be a non-negative int, got {self.warmup_iters!r}"
             )
 
         if (
